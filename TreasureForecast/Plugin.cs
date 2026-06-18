@@ -3,11 +3,11 @@ using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.UI;
 using TreasureForecast.Models;
 using TreasureForecast.Utils;
 using TreasureForecast.Windows;
 using System;
-using System.Runtime.InteropServices;
 
 namespace TreasureForecast;
 
@@ -132,7 +132,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         if (val == null) return nint.Zero;
         if (val is nint ni) return ni;
-        if (val is IntPtr ip) return (nint)ip;
+        if (val is IntPtr ip) return ip;
 
         // FFXIVClientStructs 的 Address 类型：Value 可能是属性或字段
         var t = val.GetType();
@@ -144,7 +144,7 @@ public sealed class Plugin : IDalamudPlugin
             {
                 var inner = valueProp.GetValue(val);
                 if (inner is nint ni2) return ni2;
-                if (inner is IntPtr ip2) return (nint)ip2;
+                if (inner is IntPtr ip2) return ip2;
             }
 
             // 尝试字段（InteropGenerator.Runtime.Address 使用字段存储 IntPtr）
@@ -153,7 +153,7 @@ public sealed class Plugin : IDalamudPlugin
             {
                 var inner = valueField.GetValue(val);
                 if (inner is nint ni3) return ni3;
-                if (inner is IntPtr ip3) return (nint)ip3;
+                if (inner is IntPtr ip3) return ip3;
             }
         }
         catch { }
@@ -166,7 +166,7 @@ public sealed class Plugin : IDalamudPlugin
     /// (UInt32 entityId, UInt32 category, UInt32 arg1..arg8, GameObjectId targetId, Boolean isRecorded)
     /// GameObjectId = UInt64
     /// </summary>
-    private unsafe delegate void HandleActorControlPacketDelegate(
+    private delegate void HandleActorControlPacketDelegate(
         uint entityId, uint category,
         uint arg1, uint arg2, uint arg3, uint arg4,
         uint arg5, uint arg6, uint arg7, uint arg8,
@@ -223,7 +223,6 @@ public sealed class Plugin : IDalamudPlugin
                         OnTreasureResult(endDto);
                         break;
                 }
-                return;
             }
         }
         catch (Exception ex)
@@ -260,10 +259,19 @@ public sealed class Plugin : IDalamudPlugin
             // 更新主窗口历史与统计
             MainWindow.AddResult(dto);
 
+            // 获取结果文本
+            var text = ResultFormatter.GetTreasureResultText(dto.Value);
+
+            // 显示游戏内提示（GimmickHint）
+            // 结果为失败时使用 Warning 样式
+            var isFailure = text is "失败" or "召唤失败";
+            ShowGimmickHint(
+                text,
+                isFailure ? RaptureAtkModule.TextGimmickHintStyle.Warning : RaptureAtkModule.TextGimmickHintStyle.Info);
+
             // 在聊天框显示（如果已开启）
             if (Configuration.ShowInChat)
             {
-                var text = ResultFormatter.GetTreasureResultText(dto.Value);
                 var source = string.IsNullOrEmpty(dto.Source) ? "挖宝预测" : dto.Source;
                 var roundInfo = dto.Round > 0 ? $" (第{dto.Round}轮)" : "";
                 Chat.Print($"[{source}] {text}{roundInfo}");
@@ -272,6 +280,30 @@ public sealed class Plugin : IDalamudPlugin
         catch (Exception ex)
         {
             Log.Warning(ex, "处理挖宝结果时出错");
+        }
+    }
+
+    /// <summary>
+    /// 在游戏屏幕上显示 Gimmick 提示（屏幕中央偏上位置的气泡提示）
+    /// </summary>
+    /// <param name="text">显示文本</param>
+    /// <param name="style">提示样式</param>
+    /// <param name="duration">显示时长（秒）</param>
+    private unsafe void ShowGimmickHint(
+        string text,
+        RaptureAtkModule.TextGimmickHintStyle style = RaptureAtkModule.TextGimmickHintStyle.Info,
+        int duration = 5)
+    {
+        try
+        {
+            var raptureAtkModule = RaptureAtkModule.Instance();
+            if (raptureAtkModule == null) return;
+
+            raptureAtkModule->ShowTextGimmickHint(text, style, duration);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "显示 GimmickHint 时出错");
         }
     }
 
