@@ -55,6 +55,13 @@ public class MainWindow : Window, IDisposable
     private void DrawHistory()
     {
         ImGui.Text("=== 历史记录 ===");
+        ImGui.SameLine();
+
+        // Clear 按钮
+        if (ImGui.SmallButton("清空"))
+        {
+            _results.Clear();
+        }
         ImGuiHelpers.ScaledDummy(4);
 
         using var child = ImRaii.Child("##historyList", Vector2.Zero, true);
@@ -83,7 +90,8 @@ public class MainWindow : Window, IDisposable
             };
 
             var prefix = source.Length > 0 ? $"[{source}] " : "";
-            ImGui.TextColored(color, $"{prefix}{text}{roundInfo}");
+            var time = dto.Timestamp.ToString("HH:mm:ss");
+            ImGui.TextColored(color, $"[{time}] {prefix}{text}{roundInfo}");
         }
     }
 }

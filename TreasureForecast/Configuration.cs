@@ -31,6 +31,10 @@ public class Configuration : IPluginConfiguration
     /// <summary>设置窗口是否可移动</summary>
     public bool IsConfigWindowMovable { get; set; } = true;
 
+    // ---- 调试 ----
+    /// <summary>启用 Debug 日志输出</summary>
+    public bool EnableDebugLog { get; set; } = false;
+
     public void Save()
     {
         Plugin.PluginInterface.SavePluginConfig(this);

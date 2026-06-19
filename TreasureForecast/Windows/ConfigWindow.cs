@@ -15,7 +15,7 @@ public class ConfigWindow : Window, IDisposable
         Flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse |
                 ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
 
-        Size = new Vector2(360, 320);
+        Size = new Vector2(360, 360);
         SizeCondition = ImGuiCond.Always;
 
         _configuration = plugin.Configuration;
@@ -90,6 +90,20 @@ public class ConfigWindow : Window, IDisposable
         if (ImGui.Checkbox("可移动设置窗口", ref movable))
         {
             _configuration.IsConfigWindowMovable = movable;
+            changed = true;
+        }
+
+        ImGuiHelpers.ScaledDummy(8);
+
+        // ---- 调试 ----
+        ImGui.TextColored(new Vector4(1, 1, 0, 1), "调试");
+        ImGui.Separator();
+        ImGuiHelpers.ScaledDummy(4);
+
+        var debugLog = _configuration.EnableDebugLog;
+        if (ImGui.Checkbox("Debug 日志输出（诊断网络数据包）", ref debugLog))
+        {
+            _configuration.EnableDebugLog = debugLog;
             changed = true;
         }
 

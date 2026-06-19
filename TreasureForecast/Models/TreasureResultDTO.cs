@@ -1,3 +1,5 @@
+using System;
+
 namespace TreasureForecast.Models;
 
 /// <summary>
@@ -19,4 +21,7 @@ public class TreasureResultDTO
     
     /// <summary>所属宝物库名称（G10/G12/G15/巡梦金库/普通）</summary>
     public string? Source { get; init; }
+    
+    /// <summary>结果产生时间</summary>
+    public DateTime Timestamp { get; init; } = DateTime.Now;
 }

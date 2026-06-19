@@ -54,11 +54,20 @@ internal unsafe class NetworkReceiver : IDisposable
     // ============================================================
 
     /// <summary>
-    /// FFXIV 内部 IPC 头部大小（在 OnReceivePacket 层级）。
-    /// IPC 帧结构：[2B size][2B opcode][12B unknown/ids] + payload
-    /// 共 16 字节头部后跟负载数据。
+    /// OnReceivePacket 的 nint packetPtr 数据格式在游戏各版本中不一致。
+    /// 可能指向：纯负载数据（无 IPC 头）、16B 头 + 负载、或 32B 头 + 负载。
+    /// 因此我们不假定头部大小，而是直接从 packetPtr 按多个候选偏移量试探匹配。
+    /// 
+    /// matcha 对转盘结果的偏移基准（body[24]=level, body[40]=resultType）：
+    ///   - 候选偏移 0x00：packetPtr 指向纯负载 → level@{24}, result@{40}
+    ///   - 候选偏移 0x10：packetPtr 指向 16B IPC 头 → level@{40}, result@{56}
+    ///   - 候选偏移 0x20：packetPtr 指向 32B ACT 类头 → level@{56}, result@{72}
+    /// 开门结果的偏移基准（body[16]=flag, body[32]=round, body[40]=result）同理。
+    /// 
+    /// 由于 level 值（7636061/8508181/9413549）和 flag（0x04482c03）非常特异，
+    /// 误匹配概率极低。
     /// </summary>
-    private const int IpcHeaderSize = 16;
+    private static readonly int[] CandidateBodyOffsets = { 0x00, 0x10, 0x20 };
 
     public NetworkReceiver(
         IGameInteropProvider gameInterop,
@@ -208,9 +217,9 @@ internal unsafe class NetworkReceiver : IDisposable
             var territoryId = (ushort)_clientState.TerritoryType;
 
             _actorControlPacketCount++;
-            if (_actorControlPacketCount % 50 == 0 && category > 0)
+            if (_configuration.EnableDebugLog && _actorControlPacketCount % 50 == 0 && category > 0)
             {
-                _log.Info($"[诊断] ActorControl #{_actorControlPacketCount}: cat={category} a1={arg1} a2={arg2} a3={arg3} a4={arg4} terr={territoryId}");
+                _log.Debug($"[诊断] ActorControl #{_actorControlPacketCount}: cat={category} a1={arg1} a2={arg2} a3={arg3} a4={arg4} terr={territoryId}");
             }
 
             // ---- 巡梦金库老虎机 (category = 407, 仅在 territory 1279) ----
@@ -240,6 +249,8 @@ internal unsafe class NetworkReceiver : IDisposable
     // OnReceivePacket Hook — 所有 IPC 数据包
     // ============================================================
 
+    private int _receivePacketCount;
+
     private void OnReceivePacket(nint dispatcher, uint targetId, nint packetPtr)
     {
         _onReceivePacketHook!.Original(dispatcher, targetId, packetPtr);
@@ -248,27 +259,25 @@ internal unsafe class NetworkReceiver : IDisposable
         {
             if (packetPtr == nint.Zero) return;
 
-            // 读取 IPC 帧头部中的总大小（前 2 字节）
-            // 如果格式不符，降级为无大小检查的匹配
-            ushort totalFrameSize = *(ushort*)packetPtr;
+            _receivePacketCount++;
 
-            // 负载数据 = 跳过 IPC 头部后的数据
-            // 负载数据格式与 matcha 中 GetRawData() 返回的相同
-            byte* body = (byte*)(packetPtr + IpcHeaderSize);
-            int bodySize = totalFrameSize > IpcHeaderSize ? totalFrameSize - IpcHeaderSize : 0;
-
-            // ---- 转盘结果检查 (body=56 bytes) ----
-            // matcha: DataLength==56, body[24]=level, body[40]=resultType
-            if (_configuration.EnableWheelPrediction)
+            // 诊断：每 200 包输出一次前 48 字节的 hex dump（仅在 Debug 模式开启时）
+            if (_configuration.EnableDebugLog && _receivePacketCount % 200 == 0)
             {
-                TryMatchWheelResult(body, bodySize);
+                var span = new ReadOnlySpan<byte>((void*)packetPtr, 48);
+                var hex = BitConverter.ToString(span.ToArray()).Replace("-", " ");
+                _log.Debug($"[诊断] OnReceivePacket #{_receivePacketCount}: {hex}");
             }
 
-            // ---- 开门结果检查 (body=64 bytes) ----
-            // matcha: DataLength==64, body[16]=flag, body[32]=round, body[40]=result
+            // 不假定 IPC 帧头部格式，改用多个候选偏移量试探
+            if (_configuration.EnableWheelPrediction)
+            {
+                TryMatchWheelResult((byte*)packetPtr);
+            }
+
             if (_configuration.EnableGatePrediction)
             {
-                TryMatchGateResult(body, bodySize);
+                TryMatchGateResult((byte*)packetPtr);
             }
         }
         catch (Exception ex)
@@ -278,64 +287,67 @@ internal unsafe class NetworkReceiver : IDisposable
     }
 
     /// <summary>
-    /// 匹配宝物库转盘结果 (G10/G12/G15 转盘召唤)
+    /// 尝试从 rawData 中匹配宝物库转盘结果 (G10/G12/G15)
+    /// 在多个候选 body 偏移量上逐一试探 matcha 的 level+result 签名。
     /// </summary>
-    private void TryMatchWheelResult(byte* body, int bodySize)
+    private void TryMatchWheelResult(byte* rawData)
     {
-        if (bodySize != 0 && bodySize < 41)
-            return;
-
-        var level = *(uint*)(body + 24);
-
-        string? source = level switch
+        foreach (var bodyOff in CandidateBodyOffsets)
         {
-            7636061 => "G10 运河宝物库神殿",
-            8508181 => "G12 梦羽宝殿",
-            9413549 => "G15 育体宝殿",
-            _ => null
-        };
+            // matcha: body[24] = level (uint), body[40] = resultType (byte)
+            var level = *(uint*)(rawData + bodyOff + 24);
 
-        if (source == null) return;
+            string? source = level switch
+            {
+                7636061 => "G10 运河宝物库神殿",
+                8508181 => "G12 梦羽宝殿",
+                9413549 => "G15 育体宝殿",
+                _ => null
+            };
 
-        // body[40] = TreasureShiftingWheelResultType
-        string value = body[40] switch
-        {
-            191 => "wheel-low",
-            192 => "wheel-medium",
-            193 => "wheel-high",
-            194 => "wheel-shift",
-            195 => "wheel-special",
-            196 => "wheel-end",
-            _ => "unknown"
-        };
+            if (source == null) continue;
 
-        if (value != "unknown")
-        {
-            _log.Information($"[挖宝预测] 转盘结果: {source} → {value}");
-            _predictionService.ProduceResult(value, source, 0);
+            byte resultByte = *(rawData + bodyOff + 40);
+            string value = resultByte switch
+            {
+                191 => "wheel-low",
+                192 => "wheel-medium",
+                193 => "wheel-high",
+                194 => "wheel-shift",
+                195 => "wheel-special",
+                196 => "wheel-end",
+                _ => "unknown"
+            };
+
+            if (value != "unknown")
+            {
+                _log.Information($"[挖宝预测] 转盘结果: {source} → {value} (bodyOff=0x{bodyOff:X2})");
+                _predictionService.ProduceResult(value, source, 0);
+                return;
+            }
+
+            // level 匹配但 resultByte 异常 — 可能 bodyOff 错误，继续尝试其他偏移
         }
     }
 
     /// <summary>
-    /// 匹配宝物库开门/路结果
+    /// 尝试从 rawData 中匹配宝物库开门/路结果
     /// </summary>
-    private void TryMatchGateResult(byte* body, int bodySize)
+    private void TryMatchGateResult(byte* rawData)
     {
-        if (bodySize != 0 && bodySize < 41)
-            return;
-
-        // 特征标志 0x04482c03 位于 body[16]
-        var flag = *(uint*)(body + 16);
-
-        // 0x04482c03 的高位包含 0x04, 0x48, 0x2c, 0x03
-        // 作为 uint 需要判断字节序
-        if (flag == 0x04482c03)
+        foreach (var bodyOff in CandidateBodyOffsets)
         {
-            var round = body[32] + 1;
-            var value = body[40] == 1 ? "gate-open" : "gate-fail";
+            // matcha: body[16] = flag (0x04482c03)
+            var flag = *(uint*)(rawData + bodyOff + 16);
 
-            _log.Information($"[挖宝预测] 开门结果: {value} (第{round}轮)");
+            if (flag != 0x04482c03) continue;
+
+            var round = *(rawData + bodyOff + 32) + 1;
+            var value = *(rawData + bodyOff + 40) == 1 ? "gate-open" : "gate-fail";
+
+            _log.Information($"[挖宝预测] 开门结果: {value} (第{round}轮) (bodyOff=0x{bodyOff:X2})");
             _predictionService.ProduceResult(value, "宝物库", round);
+            return;
         }
     }
 }
