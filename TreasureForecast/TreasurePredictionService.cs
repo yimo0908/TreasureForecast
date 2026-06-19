@@ -22,10 +22,28 @@ public class TreasurePredictionService
     public IReadOnlyCollection<TreasureResultDTO> RecentResults => _recentResults.ToArray();
 
     /// <summary>
-    /// 处理服务器发送的网络数据包，尝试匹配挖宝相关的数据包特征
+    /// 产生一个挖宝结果（统一入口，由 NetworkReceiver 调用）
     /// </summary>
-    /// <param name="data">完整数据包字节</param>
-    /// <param name="currentTerritoryId">当前区域 ID（用于巡梦金库判断）</param>
+    public void ProduceResult(string value, string? source, int round = 0)
+    {
+        var dto = new TreasureResultDTO
+        {
+            Value = value,
+            Source = source,
+            Round = round
+        };
+
+        AddResult(dto);
+        OnTreasureResult?.Invoke(dto);
+    }
+
+    /// <summary>
+    /// 处理服务器发送的网络数据包，尝试匹配挖宝相关的数据包特征
+    /// 
+    /// 注意：此方法现在由 NetworkReceiver.OnReceivePacket 替代。
+    /// 保留以兼容旧调用方。
+    /// </summary>
+    [Obsolete("请使用 NetworkReceiver 的 OnReceivePacket Hook 代替")]
     public void ProcessServerPacket(byte[] data, ushort currentTerritoryId = 0)
     {
         if (data == null || data.Length == 0)
@@ -77,12 +95,12 @@ public class TreasurePredictionService
 
         // -------------------------------------------------------
         // 2. 宝物库开门/路结果 (Treasure Gate Result)
-        //    数据包大小 = 72 (ActorControlSelf 包大小)
+        //    数据包大小 = 64 (对应 matcha DataLength == 64)
         //    特征标志 = 0x04482c03 (offset 16)
         //    offset 32 = 轮次, offset 40 = 1(开门成功)/其他(失败)
-        //    对应 matcha: NetworkMonitor.cs L143-L155
+        //    对应 matcha: TreasureHandler.cs L82-L95
         // -------------------------------------------------------
-        if (data.Length == 72)
+        if (data.Length == 64)
         {
             var flag = BitConverter.ToUInt32(data, 16);
             if (flag == 0x04482c03)
