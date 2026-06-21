@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -8,28 +9,19 @@ namespace TreasureForecast.Windows;
 
 public class ConfigWindow : Window, IDisposable
 {
+    private readonly Plugin _plugin;
     private readonly Configuration _configuration;
 
     public ConfigWindow(Plugin plugin) : base("挖宝预测 设置##TreasureForecastConfig")
     {
-        Flags = ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse |
-                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
-
-        Size = new Vector2(360, 360);
+        Size = new Vector2(360, 420);
         SizeCondition = ImGuiCond.Always;
 
+        _plugin = plugin;
         _configuration = plugin.Configuration;
     }
 
     public void Dispose() { }
-
-    public override void PreDraw()
-    {
-        if (_configuration.IsConfigWindowMovable)
-            Flags &= ~ImGuiWindowFlags.NoMove;
-        else
-            Flags |= ImGuiWindowFlags.NoMove;
-    }
 
     public override void Draw()
     {
@@ -66,7 +58,7 @@ public class ConfigWindow : Window, IDisposable
         ImGuiHelpers.ScaledDummy(8);
 
         // ---- 显示设置 ----
-        ImGui.TextColored(new Vector4(0, 1, 1, 1), "显示设置");
+        ImGui.TextColored(new Vector4(0, 1, 1, 1), "输出设置");
         ImGui.Separator();
         ImGuiHelpers.ScaledDummy(4);
 
@@ -78,19 +70,49 @@ public class ConfigWindow : Window, IDisposable
         }
         ImGuiHelpers.ScaledDummy(2);
 
-        var history = _configuration.ShowHistory;
-        if (ImGui.Checkbox("显示历史记录", ref history))
+        var toast = _configuration.ShowToastResult;
+        if (ImGui.Checkbox("Toast2显示结果", ref toast))
         {
-            _configuration.ShowHistory = history;
+            _configuration.ShowToastResult = toast;
             changed = true;
         }
         ImGuiHelpers.ScaledDummy(2);
 
-        var movable = _configuration.IsConfigWindowMovable;
-        if (ImGui.Checkbox("可移动设置窗口", ref movable))
+        var dungeonComplete = _configuration.ShowDungeonCompleteMessage;
+        if (ImGui.Checkbox("副本完成时提示下底成功", ref dungeonComplete))
         {
-            _configuration.IsConfigWindowMovable = movable;
+            _configuration.ShowDungeonCompleteMessage = dungeonComplete;
             changed = true;
+        }
+
+        ImGuiHelpers.ScaledDummy(8);
+
+        // ---- 成就追踪 ----
+        ImGui.TextColored(new Vector4(0, 1, 1, 1), "成就追踪");
+        ImGui.Separator();
+        ImGuiHelpers.ScaledDummy(4);
+
+        var tracking = _configuration.EnableAchievementTracking;
+        if (ImGui.Checkbox("启用自选成就进度追踪", ref tracking))
+        {
+            _configuration.EnableAchievementTracking = tracking;
+            changed = true;
+        }
+
+        if (tracking)
+        {
+            ImGuiHelpers.ScaledDummy(4);
+            var achList = _plugin.Achievements;
+            var tracked = _configuration.TrackedAchievements;
+            for (int i = 0; i < achList.Count && i < tracked.Length; i++)
+            {
+                var t = tracked[i];
+                if (ImGui.Checkbox(achList[i].AchievementName, ref t))
+                {
+                    tracked[i] = t;
+                    changed = true;
+                }
+            }
         }
 
         ImGuiHelpers.ScaledDummy(8);

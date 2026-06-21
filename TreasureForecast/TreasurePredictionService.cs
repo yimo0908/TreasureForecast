@@ -24,7 +24,7 @@ public class TreasurePredictionService
     // ---- 去重 ----
 
     /// <summary>去重窗口（同一结果在此时间内只输出一次）</summary>
-    private static readonly TimeSpan DedupWindow = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan DedupWindow = TimeSpan.FromSeconds(5);
 
     /// <summary>最近产生的结果快照，用于去重</summary>
     private readonly Dictionary<string, long> _recentResultTimestamps = new();
@@ -64,132 +64,6 @@ public class TreasurePredictionService
 
         AddResult(dto);
         OnTreasureResult?.Invoke(dto);
-    }
-
-    /// <summary>
-    /// 处理服务器发送的网络数据包，尝试匹配挖宝相关的数据包特征
-    /// 
-    /// 注意：此方法现在由 NetworkReceiver.OnReceivePacket 替代。
-    /// 保留以兼容旧调用方。
-    /// </summary>
-    [Obsolete("请使用 NetworkReceiver 的 OnReceivePacket Hook 代替")]
-    public void ProcessServerPacket(byte[] data, ushort currentTerritoryId = 0)
-    {
-        if (data == null || data.Length == 0)
-            return;
-
-        // -------------------------------------------------------
-        // 1. 宝物库转盘结果 (Treasure Shifting Wheel)
-        //    数据包大小 = 56 (ActorControl 包大小)
-        //    G10 运河宝物库神殿 = 0x007480FD → 7636061
-        //    G12 梦羽宝殿      = 0x0081D995 → 8508181
-        //    G15 育体宝殿      = 0x008F9A2D → 9413549
-        //    对应 matcha: NetworkMonitor.cs L92-L141
-        // -------------------------------------------------------
-        if (data.Length == 56)
-        {
-            var level = BitConverter.ToUInt32(data, 24);
-            string? source = level switch
-            {
-                7636061 => "G10 运河宝物库神殿",
-                8508181 => "G12 梦羽宝殿",
-                9413549 => "G15 育体宝殿",
-                _ => null
-            };
-
-            if (source != null)
-            {
-                var resultType = (ShiftingWheelResultType)data[40];
-                string value = resultType switch
-                {
-                    ShiftingWheelResultType.Low     => "wheel-low",
-                    ShiftingWheelResultType.Medium  => "wheel-medium",
-                    ShiftingWheelResultType.High    => "wheel-high",
-                    ShiftingWheelResultType.Shift   => "wheel-shift",
-                    ShiftingWheelResultType.Special => "wheel-special",
-                    ShiftingWheelResultType.End     => "wheel-end",
-                    _ => "unknown"
-                };
-
-                var dto = new TreasureResultDTO
-                {
-                    Value = value,
-                    Source = source
-                };
-                AddResult(dto);
-                OnTreasureResult?.Invoke(dto);
-                return;
-            }
-        }
-
-        // -------------------------------------------------------
-        // 2. 宝物库开门/路结果 (Treasure Gate Result)
-        //    数据包大小 = 64 (对应 matcha DataLength == 64)
-        //    特征标志 = 0x04482c03 (offset 16)
-        //    offset 32 = 轮次, offset 40 = 1(开门成功)/其他(失败)
-        //    对应 matcha: TreasureHandler.cs L82-L95
-        // -------------------------------------------------------
-        if (data.Length == 64)
-        {
-            var flag = BitConverter.ToUInt32(data, 16);
-            if (flag == 0x04482c03)
-            {
-                var round = data[32] + 1;
-                var value = data[40] == 1 ? "gate-open" : "gate-fail";
-
-                var dto = new TreasureResultDTO
-                {
-                    Value = value,
-                    Round = round,
-                    Source = "宝物库"
-                };
-                AddResult(dto);
-                OnTreasureResult?.Invoke(dto);
-                return;
-            }
-        }
-
-        // -------------------------------------------------------
-        // 3. ActorControl 类型数据包
-        //    包括: 巡梦金库老虎机 (type=407)
-        //    数据包大小 = 56
-        //    对应 matcha: NetworkMonitor.cs L244-L301 (ActorControl handler)
-        // -------------------------------------------------------
-        if (data.Length == 56)
-        {
-            var type = BitConverter.ToUInt16(data, 0);
-
-            // ---- 3a. 巡梦金库老虎机 (Hypnoslot - ActorControl type 407) ----
-            // 需要限制区域 TerritoryType = 1279
-            // 对应 matcha: NetworkMonitor.cs L265-L299
-            if (type == 407 && currentTerritoryId == 1279)
-            {
-                var result = (HypnoslotResultType)data[4];
-                switch (result)
-                {
-                    case HypnoslotResultType.AllDiff:
-                    case HypnoslotResultType.AllSame:
-                    case HypnoslotResultType.Reroll:
-                        var openDto = new TreasureResultDTO
-                        {
-                            Value = "wheel-open",
-                            Source = "巡梦金库"
-                        };
-                        AddResult(openDto);
-                        OnTreasureResult?.Invoke(openDto);
-                        break;
-                    case HypnoslotResultType.End:
-                        var endDto = new TreasureResultDTO
-                        {
-                            Value = "wheel-end",
-                            Source = "巡梦金库"
-                        };
-                        AddResult(endDto);
-                        OnTreasureResult?.Invoke(endDto);
-                        break;
-                }
-            }
-        }
     }
 
     private void AddResult(TreasureResultDTO dto)

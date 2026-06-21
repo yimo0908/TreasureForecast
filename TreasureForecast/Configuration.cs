@@ -19,21 +19,28 @@ public class Configuration : IPluginConfiguration
     public bool EnableHypnoslot { get; set; } = true;
 
     // ---- 显示设置 ----
-    /// <summary>在聊天框显示结果</summary>
+    /// <summary>发送结果到聊天框</summary>
     public bool ShowInChat { get; set; } = true;
-    
-    /// <summary>在插件主窗口显示历史记录</summary>
-    public bool ShowHistory { get; set; } = true;
+
+    /// <summary>副本完成时提示下底成功</summary>
+    public bool ShowDungeonCompleteMessage { get; set; } = true;
+
+    /// <summary>游戏内Toast提示显示结果</summary>
+    public bool ShowToastResult { get; set; } = true;
     
     /// <summary>最大历史记录条数</summary>
     public int MaxHistoryCount { get; set; } = 50;
 
-    /// <summary>设置窗口是否可移动</summary>
-    public bool IsConfigWindowMovable { get; set; } = true;
+    // ---- 成就追踪 ----
+    /// <summary>启用成就进度追踪</summary>
+    public bool EnableAchievementTracking { get; set; } = false;
+    
+    /// <summary>单项成就追踪开关</summary>
+    public bool[] TrackedAchievements { get; set; } = new bool[10];
 
     // ---- 调试 ----
     /// <summary>启用 Debug 日志输出</summary>
-    public bool EnableDebugLog { get; set; } = false;
+    public bool EnableDebugLog { get; set; }
 
     public void Save()
     {

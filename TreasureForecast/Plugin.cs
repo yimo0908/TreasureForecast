@@ -1,13 +1,19 @@
 using Dalamud.Game.Command;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Game.DutyState;
 using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Interface.Windowing;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.UI;
+using Lumina.Excel.Sheets;
+using TreasureForecast.Data;
 using TreasureForecast.Models;
 using TreasureForecast.Utils;
 using TreasureForecast.Windows;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace TreasureForecast;
 
@@ -19,6 +25,9 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
     [PluginService] internal static IChatGui Chat { get; private set; } = null!;
     [PluginService] internal static IGameInteropProvider GameInteropProvider { get; private set; } = null!;
+    [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
+    [PluginService] internal static IFramework Framework { get; private set; } = null!;
+    [PluginService] internal static IDutyState DutyState { get; private set; } = null!;
 
     private const string CommandName = "/tforecast";
 
@@ -33,6 +42,11 @@ public sealed class Plugin : IDalamudPlugin
     /// 底层网络数据包接收器（统一管理所有 Hook）
     /// </summary>
     private NetworkReceiver NetworkReceiver { get; }
+
+    internal AchievementTracker AchievementTracker { get; }
+    internal List<AchievementProgressInfo> Achievements { get; }
+
+    private ushort _lastCompletedTerritory;
 
     public Plugin()
     {
@@ -69,14 +83,46 @@ public sealed class Plugin : IDalamudPlugin
         // ---- 订阅预测事件 ----
         PredictionService.OnTreasureResult += OnTreasureResult;
 
+        // ---- 初始化成就进度跟踪 ----
+        var titleSheet = DataManager.GameData.GetExcelSheet<Title>();
+        Achievements = Constants.AchievementIds
+            .Select((id, i) =>
+            {
+                var titleRow = titleSheet?.GetRowOrDefault(
+                    DataManager.GameData.GetExcelSheet<Achievement>()?.GetRowOrDefault(id)?.Title.RowId ?? 0);
+                return new AchievementProgressInfo
+                {
+                    AchievementId = id,
+                    AchievementName = Constants.TreasureTerritories[i].Name,
+                    TitleName = titleRow?.Masculine.ToString() ?? ""
+                };
+            }).ToList();
+
+        AchievementTracker = new AchievementTracker(GameInteropProvider);
+        AchievementTracker.OnAchievementProgress += OnAchievementProgress;
+
+        // 每帧检查未收到数据的成就，自动重发请求
+        Framework.Update += OnFrameworkUpdate;
+
+        // ---- 订阅副本完成事件 ----
+        DutyState.DutyCompleted += OnDutyCompleted;
+        DutyState.DutyStarted += OnDutyStarted;
+
         Log.Information($"=== {PluginInterface.Manifest.Name} 已加载 ===");
         Log.Information($"配置: Wheel={Configuration.EnableWheelPrediction}, Gate={Configuration.EnableGatePrediction}, " +
-                        $"Hypnoslot={Configuration.EnableHypnoslot}, ShowInChat={Configuration.ShowInChat}, ShowHistory={Configuration.ShowHistory}");
+                        $"Hypnoslot={Configuration.EnableHypnoslot}, ShowInChat={Configuration.ShowInChat}");
     }
 
     public void Dispose()
     {
         NetworkReceiver.Dispose();
+
+        DutyState.DutyCompleted -= OnDutyCompleted;
+        DutyState.DutyStarted -= OnDutyStarted;
+
+        AchievementTracker.OnAchievementProgress -= OnAchievementProgress;
+        AchievementTracker.Dispose();
+        Framework.Update -= OnFrameworkUpdate;
 
         PredictionService.OnTreasureResult -= OnTreasureResult;
 
@@ -124,11 +170,13 @@ public sealed class Plugin : IDalamudPlugin
             var text = ResultFormatter.GetTreasureResultText(dto.Value);
 
             // 显示游戏内提示（GimmickHint）
-            // 结果为失败时使用 Warning 样式
-            var isFailure = text is "失败" or "召唤失败";
-            ShowGimmickHint(
-                text,
-                isFailure ? RaptureAtkModule.TextGimmickHintStyle.Warning : RaptureAtkModule.TextGimmickHintStyle.Info);
+            if (Configuration.ShowToastResult)
+            {
+                var isFailure = text is "失败" or "召唤失败";
+                ShowGimmickHint(
+                    text,
+                    isFailure ? RaptureAtkModule.TextGimmickHintStyle.Warning : RaptureAtkModule.TextGimmickHintStyle.Info);
+            }
 
             // 在聊天框显示（如果已开启）
             if (Configuration.ShowInChat)
@@ -142,6 +190,48 @@ public sealed class Plugin : IDalamudPlugin
         {
             Log.Warning(ex, "处理挖宝结果时出错");
         }
+    }
+
+    private int _achRetryCounter;
+    private readonly List<int> _pendingRefresh = new();
+
+    private void OnAchievementProgress(uint id, uint current, uint max)
+    {
+        var entry = Achievements.FirstOrDefault(a => a.AchievementId == id);
+        if (entry != null)
+        {
+            entry.Current = current;
+            entry.Max = max;
+        }
+    }
+
+    private void OnFrameworkUpdate(IFramework framework)
+    {
+        // 逐帧消费待刷新队列，避免 ProgressRequestState 锁冲突
+        if (_pendingRefresh.Count > 0)
+        {
+            var idx = _pendingRefresh[0];
+            _pendingRefresh.RemoveAt(0);
+            AchievementTracker.Request(Achievements[idx].AchievementId);
+            return;
+        }
+
+        _achRetryCounter++;
+        if (_achRetryCounter < 300) return;
+        _achRetryCounter = 0;
+
+        foreach (var ach in Achievements)
+        {
+            if (ach.Max == 0)
+            {
+                AchievementTracker.Request(ach.AchievementId);
+                return;
+            }
+        }
+
+        // 全部已初始化，排入刷新队列
+        for (int i = 0; i < Achievements.Count; i++)
+            _pendingRefresh.Add(i);
     }
 
     /// <summary>
@@ -165,6 +255,33 @@ public sealed class Plugin : IDalamudPlugin
         catch (Exception ex)
         {
             Log.Warning(ex, "显示 GimmickHint 时出错");
+        }
+    }
+
+    public void ExportAchievementProgress()
+    {
+        var lines = Achievements.Select(a => $"{a.AchievementName}: {a.Current}/{a.Max}");
+        var text = string.Join("\n", lines);
+        ImGui.SetClipboardText(text);
+        Chat.Print("成就进度导出成功");
+    }
+
+    private void OnDutyStarted(IDutyStateEventArgs args)
+    {
+        _lastCompletedTerritory = 0;
+    }
+
+    private void OnDutyCompleted(IDutyStateEventArgs args)
+    {
+        var territoryId = (ushort)args.TerritoryType.RowId;
+        if (!Constants.TerritoryIdSet.Contains(territoryId)) return;
+        if (territoryId == _lastCompletedTerritory) return;
+        _lastCompletedTerritory = territoryId;
+
+        if (Configuration.ShowDungeonCompleteMessage)
+        {
+            Chat.Print("❀❀下底成功❀❀");
+            MainWindow.AddDutyCompleteSeparator();
         }
     }
 

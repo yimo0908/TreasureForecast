@@ -8,13 +8,17 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 - 宝物库开门/路结果（成功 / 失败）
 - 巡梦金库（Hypnoslot）老虎机结果
 - 在主窗口显示带时间戳的历史记录，可选择在聊天框输出简短提示
+- 成就进度追踪：Hook `ReceiveAchievementProgress` 展示 10 个宝藏副本对应成就的完成进度，支持自选追踪
+- 副本完成检测：低延迟识别宝藏副本完成事件，输出下底成功提示并写入历史记录
 
 ## 主要特性
 
 - 实时预测：Hook `HandleActorControlPacket` 和 `PacketDispatcher.OnReceivePacket` 双通道捕获网络数据包
+- 成就进度追踪：通过 FFXIVClientStructs Hook 捕获 `ReceiveAchievementProgress`，支持 4 色进度条
+- 副本完成检测：使用 `IDutyState.DutyCompleted` 事件，覆盖 G8～G18 共 10 个宝藏副本
 - 不依赖可变 opcode：通过固定字节特征（level 值 / 标志位）识别事件
 - 自动去重：2 秒内同一结果只触发一次，避免游戏回调重复导致重复输出
-- 可配置：开/关不同类型预测、是否在聊天框显示、历史记录数量、Debug 日志等
+- 可配置：开/关不同类型预测、是否在聊天框显示、Toast 提示开关、成就追踪、Debug 日志等
 - Debug 模式：开启后输出诊断日志（hex dump + 识别偏移量），便于排查
 
 ## 命令
@@ -29,10 +33,14 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 - 开门/路结果预测 — 默认开启
 - 巡梦金库老虎机预测 — 默认开启
 
-### 显示设置
+### 输出设置
 - 在聊天框显示结果 — 默认开启
-- 显示历史记录 — 默认开启
-- 可移动设置窗口 — 默认开启
+- Toast2 显示结果 — 默认开启，控制游戏屏幕中央的 GimmickHint 提示
+- 副本完成时提示下底成功 — 默认开启
+
+### 成就追踪
+- 启用自选成就进度追踪 — 默认关闭，开启后仅显示勾选的成就
+- 10 个单项成就勾选框（G8～G18 对应成就）
 
 ### 调试
 - Debug 日志输出 — 默认关闭，开启后输出网络包 hex dump 和匹配信息到 Dalamud 日志
@@ -75,35 +83,48 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
   [20:58:12] [G15 育体宝殿] 下级召唤
   [20:58:10] [宝物库] 开门 (第1轮)
   [20:57:55] [巡梦金库] 成功
+  [20:50:01] ❀❀下底成功❀❀
+  ──────────────────
   ```
 
 - 聊天框输出（若启用）：
   ```
   [巡梦金库] 成功
   [宝物库] 上级召唤
+  ❀❀下底成功❀❀
+  ```
+
+- 成就进度标签页展示（每个成就带 4 色进度条及称号信息）：
+  ```
+  G18 巡梦金库
+  [████████████░░░░░░░] 15 / 20 (75%)  巡梦者
   ```
 
 - 主窗口历史中按类型有颜色区分：
   - 蓝色 — 下级召唤 (wheel-low)
   - 绿色 — 中级召唤 (wheel-medium)
-  - 金色 — 上级召唤 (wheel-high)
-  - 粉紫 — 召唤式变动 (wheel-shift)
-  - 紫色 — 特殊召唤 (wheel-special)
-  - 红色 — 召唤失败 / 开门失败 (wheel-end / gate-fail)
+  - 红色 — 上级召唤 / 开门失败 (wheel-high / gate-fail)
+  - 金色 — 召唤式变动 / 下底成功 (wheel-shift / dungeon-complete)
+  - 银色 — 特殊召唤 (wheel-special)
+  - 紫色 — 召唤失败 (wheel-end)
   - 亮绿 — 开门成功 (gate-open / wheel-open)
 
 ## 项目结构
 
 ```
 TreasureForecast/
+├── Data/
+│   └── Constants.cs              —— 成就 ID / 宝藏领土 ID 等常量
 ├── Models/
+│   ├── AchievementProgressInfo.cs —— 成就进度数据模型
 │   ├── TreasureEnums.cs          —— ShiftingWheelResultType / HypnoslotResultType
 │   └── TreasureResultDTO.cs      —— 挖宝结果 DTO（含时间戳）
 ├── Utils/
 │   └── ResultFormatter.cs        —— 结果格式化（中文描述映射）
 ├── Windows/
-│   ├── MainWindow.cs             —— 主窗口（历史记录 + 清空按钮）
+│   ├── MainWindow.cs             —— 主窗口（历史记录 + 成就进度 + 导出）
 │   └── ConfigWindow.cs           —— 设置窗口
+├── AchievementTracker.cs         —— 成就进度 Hook（ReceiveAchievementProgress）
 ├── NetworkReceiver.cs            —— 底层网络 Hook 管理（双通道捕获 + 偏移量试探）
 ├── TreasurePredictionService.cs  —— 预测逻辑核心（结果触发 + 去重）
 ├── Plugin.cs                     —— Dalamud 插件生命周期与命令
