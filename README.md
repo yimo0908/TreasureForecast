@@ -8,8 +8,9 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 - 宝物库开门/路结果（成功 / 失败）
 - 巡梦金库（Hypnoslot）老虎机结果
 - 在主窗口显示带时间戳的历史记录，可选择在聊天框输出简短提示
-- 成就进度追踪：Hook `ReceiveAchievementProgress` 展示 10 个宝藏副本对应成就的完成进度，支持自选追踪
+- 成就进度追踪：Hook `ReceiveAchievementProgress` 展示 10 个宝藏副本对应成就的完成进度，支持自选追踪，并提供一键导出到剪贴板
 - 副本完成检测：低延迟识别宝藏副本完成事件，输出下底成功提示并写入历史记录
+- 历史自动分隔：进入宝藏副本时自动插入分隔线，便于区分每次下底历程
 
 ## 主要特性
 
@@ -17,8 +18,9 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 - 成就进度追踪：通过 FFXIVClientStructs Hook 捕获 `ReceiveAchievementProgress`，支持 4 色进度条
 - 副本完成检测：使用 `IDutyState.DutyCompleted` 事件，覆盖 G8～G18 共 10 个宝藏副本
 - 不依赖可变 opcode：通过固定字节特征（level 值 / 标志位）识别事件
-- 自动去重：2 秒内同一结果只触发一次，避免游戏回调重复导致重复输出
-- 可配置：开/关不同类型预测、是否在聊天框显示、Toast 提示开关、成就追踪、Debug 日志等
+- 自动去重：5 秒内同一结果只触发一次，避免游戏回调重复导致重复输出
+- 进度自动刷新：后台每 5 秒批量刷新成就进度，未初始化的成就每 0.5 秒快速轮询重试
+- 可配置：开/关不同类型预测、是否在聊天框显示、Toast 提示开关、成就追踪、历史上限、Debug 日志等
 - Debug 模式：开启后输出诊断日志（hex dump + 识别偏移量），便于排查
 
 ## 命令
@@ -37,6 +39,7 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 - 在聊天框显示结果 — 默认开启
 - Toast2 显示结果 — 默认开启，控制游戏屏幕中央的 GimmickHint 提示
 - 副本完成时提示下底成功 — 默认开启
+- 历史记录最大条数（MaxHistoryCount）— 默认 50，超出上限时自动淘汰最旧条目
 
 ### 成就追踪
 - 启用自选成就进度追踪 — 默认关闭，开启后仅显示勾选的成就
@@ -55,7 +58,7 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
   - 7636061 → G10 运河宝物库神殿
   - 8508181 → G12 梦羽宝殿
   - 9413549 → G15 育体宝殿
-- offset+40 的字节映射为结果类型：wheel-low / medium / high / shift / special / end
+- offset+40 的字节映射为结果类型（ShiftingWheelResultType 枚举）：191=Low, 192=Medium, 193=High, 194=Shift, 195=Special, 196=End
 
 ### 开门/路结果（Treasure Gate）
 
@@ -66,7 +69,7 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 
 - 通过 `HandleActorControlPacket` Hook 拦截
 - category = 407 且 TerritoryType = 1279（限定地图）
-- 根据 arg1 映射 HypnoslotResultType（AllDiff / AllSame / Reroll → wheel-open，End → wheel-end）
+- 根据 arg1 映射 HypnoslotResultType（156=AllDiff, 157=AllSame, 158=Preserve, 159=Reroll → wheel-open，160=End → wheel-end）
 
 ## 日志与调试
 
@@ -117,7 +120,6 @@ TreasureForecast/
 │   └── Constants.cs              —— 成就 ID / 宝藏领土 ID 等常量
 ├── Models/
 │   ├── AchievementProgressInfo.cs —— 成就进度数据模型
-│   ├── TreasureEnums.cs          —— ShiftingWheelResultType / HypnoslotResultType
 │   └── TreasureResultDTO.cs      —— 挖宝结果 DTO（含时间戳）
 ├── Utils/
 │   └── ResultFormatter.cs        —— 结果格式化（中文描述映射）
@@ -125,10 +127,11 @@ TreasureForecast/
 │   ├── MainWindow.cs             —— 主窗口（历史记录 + 成就进度 + 导出）
 │   └── ConfigWindow.cs           —— 设置窗口
 ├── AchievementTracker.cs         —— 成就进度 Hook（ReceiveAchievementProgress）
-├── NetworkReceiver.cs            —— 底层网络 Hook 管理（双通道捕获 + 偏移量试探）
+├── NetworkReceiver.cs            —— 底层网络 Hook 管理（双通道捕获 + 偏移量试探 + 嵌套枚举）
 ├── TreasurePredictionService.cs  —— 预测逻辑核心（结果触发 + 去重）
 ├── Plugin.cs                     —— Dalamud 插件生命周期与命令
-└── Configuration.cs              —— 插件配置
+├── Configuration.cs              —— 插件配置
+└── TreasureForecast.json         —— Dalamud 插件清单
 ```
 
 ## 构建与安装

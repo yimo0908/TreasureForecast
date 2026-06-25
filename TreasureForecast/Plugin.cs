@@ -98,6 +98,10 @@ public sealed class Plugin : IDalamudPlugin
                 };
             }).ToList();
 
+        // 构建成就 ID → 索引 字典，O(1) 回调查找
+        for (int i = 0; i < Achievements.Count; i++)
+            _achIndexById[Achievements[i].AchievementId] = i;
+
         AchievementTracker = new AchievementTracker(GameInteropProvider);
         AchievementTracker.OnAchievementProgress += OnAchievementProgress;
 
@@ -193,13 +197,18 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     private int _achRetryCounter;
-    private readonly List<int> _pendingRefresh = new();
+    private int _nextUninitializedIdx;
+    private readonly Queue<int> _pendingRefresh = new();
+    private readonly Dictionary<uint, int> _achIndexById = new();
+
+    private const int AchInitRetryInterval = 30;   // 未初始化时每 0.5s 快速重试
+    private const int AchRefreshInterval = 300;     // 全部初始化后每 5s 批量刷新
 
     private void OnAchievementProgress(uint id, uint current, uint max)
     {
-        var entry = Achievements.FirstOrDefault(a => a.AchievementId == id);
-        if (entry != null)
+        if (_achIndexById.TryGetValue(id, out var idx))
         {
+            var entry = Achievements[idx];
             entry.Current = current;
             entry.Max = max;
         }
@@ -207,31 +216,54 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnFrameworkUpdate(IFramework framework)
     {
-        // 逐帧消费待刷新队列，避免 ProgressRequestState 锁冲突
+        // Phase 1: 逐帧消费待刷新队列，避免 ProgressRequestState 锁冲突
         if (_pendingRefresh.Count > 0)
         {
-            var idx = _pendingRefresh[0];
-            _pendingRefresh.RemoveAt(0);
+            var idx = _pendingRefresh.Dequeue();
             AchievementTracker.Request(Achievements[idx].AchievementId);
             return;
         }
 
         _achRetryCounter++;
-        if (_achRetryCounter < 300) return;
-        _achRetryCounter = 0;
 
+        // 判断是否全部已初始化
+        var allInit = true;
         foreach (var ach in Achievements)
         {
-            if (ach.Max == 0)
-            {
-                AchievementTracker.Request(ach.AchievementId);
-                return;
-            }
+            if (ach.Max == 0) { allInit = false; break; }
         }
 
-        // 全部已初始化，排入刷新队列
-        for (int i = 0; i < Achievements.Count; i++)
-            _pendingRefresh.Add(i);
+        if (allInit)
+        {
+            // Phase 2: 全部已初始化 → 每 AchRefreshInterval 帧批量排入刷新队列
+            if (_achRetryCounter >= AchRefreshInterval)
+            {
+                _achRetryCounter = 0;
+                for (int i = 0; i < Achievements.Count; i++)
+                    _pendingRefresh.Enqueue(i);
+                // 本帧立即消费一个
+                var idx = _pendingRefresh.Dequeue();
+                AchievementTracker.Request(Achievements[idx].AchievementId);
+            }
+        }
+        else
+        {
+            // Phase 3: 存在未初始化成就 → 每 AchInitRetryInterval 帧快速重试（轮询扫描）
+            if (_achRetryCounter >= AchInitRetryInterval)
+            {
+                _achRetryCounter = 0;
+                for (int i = 0; i < Achievements.Count; i++)
+                {
+                    int idx = (_nextUninitializedIdx + i) % Achievements.Count;
+                    if (Achievements[idx].Max == 0)
+                    {
+                        AchievementTracker.Request(Achievements[idx].AchievementId);
+                        _nextUninitializedIdx = (idx + 1) % Achievements.Count;
+                        return;
+                    }
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -269,6 +301,7 @@ public sealed class Plugin : IDalamudPlugin
     private void OnDutyStarted(IDutyStateEventArgs args)
     {
         _lastCompletedTerritory = 0;
+        PredictionService.ClearCurrentMapName();
     }
 
     private void OnDutyCompleted(IDutyStateEventArgs args)
@@ -283,6 +316,7 @@ public sealed class Plugin : IDalamudPlugin
             Chat.Print("❀❀下底成功❀❀");
             MainWindow.AddDutyCompleteSeparator();
         }
+        PredictionService.ClearCurrentMapName();
     }
 
     private void OnCommand(string command, string args)

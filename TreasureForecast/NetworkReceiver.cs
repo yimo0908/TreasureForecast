@@ -1,7 +1,8 @@
 using Dalamud.Plugin.Services;
 using System;
+using System.Linq;
 using System.Runtime.InteropServices;
-using TreasureForecast.Models;
+using TreasureForecast.Data;
 
 namespace TreasureForecast;
 
@@ -39,6 +40,36 @@ internal unsafe class NetworkReceiver : IDisposable
     /// 调用约定：x64 thiscall → RCX=this, RDX=targetId, R8=packetPtr
     /// </summary>
     private delegate void OnReceivePacketDelegate(nint dispatcher, uint targetId, nint packetPtr);
+
+    // ============================================================
+    // 嵌套枚举
+    // ============================================================
+
+    /// <summary>
+    /// 巡梦金库老虎机结果类型
+    /// 对应 matcha 项目 HypnoslotResultType.cs
+    /// </summary>
+    private enum HypnoslotResultType : byte
+    {
+        AllDiff = 156,
+        AllSame = 157,
+        Preserve = 158,
+        Reroll = 159,
+        End = 160,
+    }
+
+    /// <summary>
+    /// 宝物库转盘结果类型（G10 运河宝物库神殿 / G12 梦羽宝殿 / G15 育体宝殿）
+    /// </summary>
+    private enum ShiftingWheelResultType : byte
+    {
+        Low = 191,
+        Medium = 192,
+        High = 193,
+        Shift = 194,
+        Special = 195,
+        End = 196,
+    }
 
     // ============================================================
     // Hook 实例
@@ -201,6 +232,19 @@ internal unsafe class NetworkReceiver : IDisposable
     }
 
     // ============================================================
+    // 地图名缓存辅助
+    // ============================================================
+
+    private void TrySetCurrentMapName()
+    {
+        if (_predictionService.HasCurrentMapName) return;
+        var territoryId = (ushort)_clientState.TerritoryType;
+        var match = Constants.TreasureTerritories.FirstOrDefault(t => t.Id == territoryId);
+        if (match != null)
+            _predictionService.SetCurrentMapName(match.Name);
+    }
+
+    // ============================================================
     // HandleActorControlPacket Hook
     // ============================================================
 
@@ -214,6 +258,8 @@ internal unsafe class NetworkReceiver : IDisposable
 
         try
         {
+            TrySetCurrentMapName();
+
             var territoryId = (ushort)_clientState.TerritoryType;
 
             _actorControlPacketCount++;
@@ -230,6 +276,7 @@ internal unsafe class NetworkReceiver : IDisposable
                 {
                     case HypnoslotResultType.AllDiff:
                     case HypnoslotResultType.AllSame:
+                    case HypnoslotResultType.Preserve:
                     case HypnoslotResultType.Reroll:
                         _predictionService.ProduceResult("wheel-open", "巡梦金库", 0);
                         break;
@@ -257,6 +304,8 @@ internal unsafe class NetworkReceiver : IDisposable
 
         try
         {
+            TrySetCurrentMapName();
+
             if (packetPtr == nint.Zero) return;
 
             _receivePacketCount++;
@@ -308,14 +357,15 @@ internal unsafe class NetworkReceiver : IDisposable
             if (source == null) continue;
 
             byte resultByte = *(rawData + bodyOff + 40);
-            string value = resultByte switch
+            var result = (ShiftingWheelResultType)resultByte;
+            string value = result switch
             {
-                191 => "wheel-low",
-                192 => "wheel-medium",
-                193 => "wheel-high",
-                194 => "wheel-shift",
-                195 => "wheel-special",
-                196 => "wheel-end",
+                ShiftingWheelResultType.Low => "wheel-low",
+                ShiftingWheelResultType.Medium => "wheel-medium",
+                ShiftingWheelResultType.High => "wheel-high",
+                ShiftingWheelResultType.Shift => "wheel-shift",
+                ShiftingWheelResultType.Special => "wheel-special",
+                ShiftingWheelResultType.End => "wheel-end",
                 _ => "unknown"
             };
 
@@ -346,7 +396,7 @@ internal unsafe class NetworkReceiver : IDisposable
             var value = *(rawData + bodyOff + 40) == 1 ? "gate-open" : "gate-fail";
 
             _log.Information($"[挖宝预测] 开门结果: {value} (第{round}轮) (bodyOff=0x{bodyOff:X2})");
-            _predictionService.ProduceResult(value, "宝物库", round);
+            _predictionService.ProduceResult(value, null, round);
             return;
         }
     }

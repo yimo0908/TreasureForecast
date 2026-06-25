@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using TreasureForecast.Models;
-using TreasureForecast.Utils;
 
 namespace TreasureForecast;
 
@@ -11,15 +10,24 @@ namespace TreasureForecast;
 /// </summary>
 public class TreasurePredictionService
 {
-    private readonly Queue<TreasureResultDTO> _recentResults = new();
-    private const int MaxRecentResults = 50;
+    private string? _currentMapName;
+
+    public bool HasCurrentMapName => _currentMapName != null;
+
+    public void SetCurrentMapName(string name)
+    {
+        _currentMapName = name;
+    }
+
+    public void ClearCurrentMapName()
+    {
+        _currentMapName = null;
+    }
 
     /// <summary>
     /// 挖宝结果产生时触发
     /// </summary>
     public event Action<TreasureResultDTO>? OnTreasureResult;
-
-    public IReadOnlyCollection<TreasureResultDTO> RecentResults => _recentResults.ToArray();
 
     // ---- 去重 ----
 
@@ -55,30 +63,18 @@ public class TreasurePredictionService
             _recentResultTimestamps[key] = now;
         }
 
+        var actualSource = _currentMapName ?? source;
+
+        if (value == "wheel-end" || value == "dungeon-complete")
+            _currentMapName = null;
+
         var dto = new TreasureResultDTO
         {
             Value = value,
-            Source = source,
+            Source = actualSource,
             Round = round
         };
 
-        AddResult(dto);
         OnTreasureResult?.Invoke(dto);
-    }
-
-    private void AddResult(TreasureResultDTO dto)
-    {
-        _recentResults.Enqueue(dto);
-        while (_recentResults.Count > MaxRecentResults)
-            _recentResults.Dequeue();
-    }
-
-    /// <summary>
-    /// 将结果值转换为中文描述
-    /// 对应 matcha: Formatter.cs L152-L182 GetTreasureResultText()
-    /// </summary>
-    public static string GetResultText(string value)
-    {
-        return ResultFormatter.GetTreasureResultText(value) ?? value;
     }
 }

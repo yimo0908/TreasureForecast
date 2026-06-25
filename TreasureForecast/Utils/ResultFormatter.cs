@@ -30,7 +30,7 @@ namespace TreasureForecast.Utils
                 case "wheel-special":
                     return "下级召唤";
                 case "wheel-end":
-                    return "召唤失败";
+                    return "失败";
                 case "wheel-open":
                     return "成功";
                 case "gate-open":
@@ -40,23 +40,6 @@ namespace TreasureForecast.Utils
             }
 
             return "";
-        }
-
-        /// <summary>
-        /// 获取结果显示文本，包含来源和轮次信息
-        /// </summary>
-        public static string GetResultDisplayText(string value, string? source = null, int round = 0)
-        {
-            var resultText = GetTreasureResultText(value);
-            if (string.IsNullOrEmpty(resultText))
-            {
-                return "";
-            }
-
-            var sourceText = string.IsNullOrEmpty(source) ? "挖宝预测" : source;
-            var roundInfo = round > 0 ? $" (第{round}轮)" : "";
-
-            return $"[{sourceText}] {resultText}{roundInfo}";
         }
     }
 }

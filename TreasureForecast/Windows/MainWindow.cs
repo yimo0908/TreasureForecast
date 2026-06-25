@@ -8,6 +8,7 @@ using Dalamud.Interface.Utility;
 using Dalamud.Interface.Utility.Raii;
 using Dalamud.Interface.Windowing;
 using TreasureForecast.Models;
+using TreasureForecast.Utils;
 
 namespace TreasureForecast.Windows;
 
@@ -52,12 +53,9 @@ public class MainWindow : Window, IDisposable
         {
             _isInsideTreasureDungeon = true;
 
-            var separator = new TreasureResultDTO
-            {
-                Value = "separator",
-                Timestamp = dto.Timestamp
-            };
-            _results.Add(separator);
+            // 避免与 AddDutyCompleteSeparator 已插入的分割线重复
+            if (!(_results.Count > 0 && _results[^1].Value == "separator"))
+                _results.Add(new TreasureResultDTO { Value = "separator", Timestamp = dto.Timestamp });
         }
 
         _results.Add(dto);
@@ -135,8 +133,7 @@ public class MainWindow : Window, IDisposable
 
             var text = dto.Value == "dungeon-complete"
                 ? "❀❀下底成功❀❀"
-                : TreasurePredictionService.GetResultText(dto.Value);
-            var source = dto.Source ?? "";
+                : ResultFormatter.GetTreasureResultText(dto.Value);
             var roundInfo = dto.Round > 0 ? $" (第{dto.Round}轮)" : "";
 
             var color = dto.Value switch
@@ -155,7 +152,8 @@ public class MainWindow : Window, IDisposable
             };
 
             var time = dto.Timestamp.ToString("HH:mm:ss");
-            ImGui.TextColored(color, $"[{time}] {text}{roundInfo}");
+            var sourcePrefix = string.IsNullOrEmpty(dto.Source) ? "" : $"[{dto.Source}] ";
+            ImGui.TextColored(color, $"[{time}] {sourcePrefix}{text}{roundInfo}");
         }
     }
 
@@ -172,7 +170,7 @@ public class MainWindow : Window, IDisposable
         IEnumerable<AchievementProgressInfo> displayList = achList;
         if (cfg.EnableAchievementTracking)
         {
-            displayList = achList.Where((a, i) => i < cfg.TrackedAchievements.Length && cfg.TrackedAchievements[i]);
+            displayList = achList.Where((a, i) => i < cfg.TrackedAchievements.Length && cfg.TrackedAchievements[i]).ToList();
             if (!displayList.Any())
             {
                 ImGui.TextColored(new Vector4(0.6f, 0.6f, 0.6f, 1), "请在设置中选择要追踪的成就");
@@ -231,11 +229,16 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>根据进度返回对应颜色：红(&lt;25%)→黄(&lt;50%)→蓝(&lt;100%)→绿(=100%)。</summary>
+    private static readonly uint ProgressColorComplete = ImGui.GetColorU32(new Vector4(0.2f,  1f,   0.2f,  1f));
+    private static readonly uint ProgressColorHigh    = ImGui.GetColorU32(new Vector4(0.3f,  0.7f,  1f,   1f));
+    private static readonly uint ProgressColorMid     = ImGui.GetColorU32(new Vector4(1f,   0.85f, 0.2f,  1f));
+    private static readonly uint ProgressColorLow     = ImGui.GetColorU32(new Vector4(1f,   0.3f,  0.3f,  1f));
+
     private static uint GetProgressColor(float progress) => progress switch
     {
-        >= 1f    => ImGui.GetColorU32(new Vector4(0.2f,  1f,   0.2f,  1f)),   // 100%  绿色
-        >= 0.5f  => ImGui.GetColorU32(new Vector4(0.3f,  0.7f,  1f,   1f)),   // 50-99% 蓝色
-        >= 0.25f => ImGui.GetColorU32(new Vector4(1f,   0.85f, 0.2f,  1f)),   // 25-49% 黄色
-        _        => ImGui.GetColorU32(new Vector4(1f,   0.3f,  0.3f,  1f)),   // 0-24%  红色
+        >= 1f    => ProgressColorComplete,
+        >= 0.5f  => ProgressColorHigh,
+        >= 0.25f => ProgressColorMid,
+        _        => ProgressColorLow,
     };
 }

@@ -19,7 +19,7 @@ public class TreasureResultDTO
     /// <summary>轮次（开门时使用）</summary>
     public int Round { get; init; }
     
-    /// <summary>所属宝物库名称（G10/G12/G15/巡梦金库/普通）</summary>
+    /// <summary>所属宝物库名称（G10/G12/G15/巡梦金库）</summary>
     public string? Source { get; init; }
     
     /// <summary>结果产生时间</summary>
