@@ -1,6 +1,5 @@
 using Dalamud.Plugin.Services;
 using System;
-using System.Linq;
 using System.Runtime.InteropServices;
 using TreasureForecast.Data;
 
@@ -79,6 +78,19 @@ internal unsafe class NetworkReceiver : IDisposable
     private Dalamud.Hooking.Hook<OnReceivePacketDelegate>? _onReceivePacketHook;
 
     private int _actorControlPacketCount;
+
+    // ============================================================
+    // 地图名缓存（避免每包 LINQ 线性扫描）
+    // ============================================================
+
+    private ushort _lastTerritoryId;
+    private bool _isTreasureTerritory;
+
+    /// <summary>
+    /// 匹配所需的最小数据包长度（bodyOff=0x20 时读取 offset 40 → 字节 72）。
+    /// FFXIV IPC 数据包均大于此值；若包过短，OnReceivePacket 的 try/catch 会兜底。
+    /// </summary>
+    private const int MinPacketSize = 0x20 + 40 + 1; // 73
 
     // ============================================================
     // IPC 数据包格式常量
@@ -232,16 +244,27 @@ internal unsafe class NetworkReceiver : IDisposable
     }
 
     // ============================================================
-    // 地图名缓存辅助
+    // 地图名缓存辅助（O(1) 查找 + 领地缓存，避免每包 LINQ 扫描）
     // ============================================================
 
     private void TrySetCurrentMapName()
     {
         if (_predictionService.HasCurrentMapName) return;
         var territoryId = (ushort)_clientState.TerritoryType;
-        var match = Constants.TreasureTerritories.FirstOrDefault(t => t.Id == territoryId);
-        if (match != null)
-            _predictionService.SetCurrentMapName(match.Name);
+
+        // 缓存上次领地：若已知非宝藏领地则跳过，避免每包重复查表
+        if (territoryId == _lastTerritoryId && !_isTreasureTerritory) return;
+        _lastTerritoryId = territoryId;
+
+        if (Constants.TerritoryNameById.TryGetValue(territoryId, out var name))
+        {
+            _isTreasureTerritory = true;
+            _predictionService.SetCurrentMapName(name);
+        }
+        else
+        {
+            _isTreasureTerritory = false;
+        }
     }
 
     // ============================================================
@@ -266,6 +289,15 @@ internal unsafe class NetworkReceiver : IDisposable
             if (_configuration.EnableDebugLog && _actorControlPacketCount % 50 == 0 && category > 0)
             {
                 _log.Debug($"[诊断] ActorControl #{_actorControlPacketCount}: cat={category} a1={arg1} a2={arg2} a3={arg3} a4={arg4} terr={territoryId}");
+            }
+
+            // ---- 巡梦金库老虎机 无过滤日志 (category = 407) ----
+            if (_configuration.EnableDebugLog && category == 407)
+            {
+                var enumName = Enum.IsDefined(typeof(HypnoslotResultType), (byte)arg1)
+                    ? ((HypnoslotResultType)(byte)arg1).ToString()
+                    : "Unknown";
+                _log.Information($"[Hypnoslot] arg1={arg1} ({enumName}) a2={arg2} a3={arg3} a4={arg4} terr={territoryId}");
             }
 
             // ---- 巡梦金库老虎机 (category = 407, 仅在 territory 1279) ----
@@ -314,20 +346,12 @@ internal unsafe class NetworkReceiver : IDisposable
             if (_configuration.EnableDebugLog && _receivePacketCount % 200 == 0)
             {
                 var span = new ReadOnlySpan<byte>((void*)packetPtr, 48);
-                var hex = BitConverter.ToString(span.ToArray()).Replace("-", " ");
+                var hex = Convert.ToHexString(span);
                 _log.Debug($"[诊断] OnReceivePacket #{_receivePacketCount}: {hex}");
             }
 
-            // 不假定 IPC 帧头部格式，改用多个候选偏移量试探
-            if (_configuration.EnableWheelPrediction)
-            {
-                TryMatchWheelResult((byte*)packetPtr);
-            }
-
-            if (_configuration.EnableGatePrediction)
-            {
-                TryMatchGateResult((byte*)packetPtr);
-            }
+            // 合并转盘+开门匹配，单次遍历候选偏移量
+            TryMatchPacket((byte*)packetPtr);
         }
         catch (Exception ex)
         {
@@ -336,68 +360,70 @@ internal unsafe class NetworkReceiver : IDisposable
     }
 
     /// <summary>
-    /// 尝试从 rawData 中匹配宝物库转盘结果 (G10/G12/G15)
-    /// 在多个候选 body 偏移量上逐一试探 matcha 的 level+result 签名。
+    /// 合并匹配转盘和开门结果，单次遍历候选偏移量。
+    /// 转盘签名（level@24）和开门签名（flag@16）互斥，首个匹配即返回。
     /// </summary>
-    private void TryMatchWheelResult(byte* rawData)
+    private void TryMatchPacket(byte* rawData)
     {
+        var checkWheel = _configuration.EnableWheelPrediction;
+        var checkGate = _configuration.EnableGatePrediction;
+        if (!checkWheel && !checkGate) return;
+
         foreach (var bodyOff in CandidateBodyOffsets)
         {
-            // matcha: body[24] = level (uint), body[40] = resultType (byte)
-            var level = *(uint*)(rawData + bodyOff + 24);
-
-            string? source = level switch
+            // ---- 转盘匹配: body[24] = level (uint), body[40] = resultType (byte) ----
+            if (checkWheel)
             {
-                7636061 => "G10 运河宝物库神殿",
-                8508181 => "G12 梦羽宝殿",
-                9413549 => "G15 育体宝殿",
-                _ => null
-            };
+                var level = *(uint*)(rawData + bodyOff + 24);
 
-            if (source == null) continue;
+                string? source = level switch
+                {
+                    7636061 => "G10 运河宝物库神殿",
+                    8508181 => "G12 梦羽宝殿",
+                    9413549 => "G15 育体宝殿",
+                    _ => null
+                };
 
-            byte resultByte = *(rawData + bodyOff + 40);
-            var result = (ShiftingWheelResultType)resultByte;
-            string value = result switch
-            {
-                ShiftingWheelResultType.Low => "wheel-low",
-                ShiftingWheelResultType.Medium => "wheel-medium",
-                ShiftingWheelResultType.High => "wheel-high",
-                ShiftingWheelResultType.Shift => "wheel-shift",
-                ShiftingWheelResultType.Special => "wheel-special",
-                ShiftingWheelResultType.End => "wheel-end",
-                _ => "unknown"
-            };
+                if (source != null)
+                {
+                    byte resultByte = *(rawData + bodyOff + 40);
+                    var result = (ShiftingWheelResultType)resultByte;
+                    string value = result switch
+                    {
+                        ShiftingWheelResultType.Low => "wheel-low",
+                        ShiftingWheelResultType.Medium => "wheel-medium",
+                        ShiftingWheelResultType.High => "wheel-high",
+                        ShiftingWheelResultType.Shift => "wheel-shift",
+                        ShiftingWheelResultType.Special => "wheel-special",
+                        ShiftingWheelResultType.End => "wheel-end",
+                        _ => "unknown"
+                    };
 
-            if (value != "unknown")
-            {
-                _log.Information($"[挖宝预测] 转盘结果: {source} → {value} (bodyOff=0x{bodyOff:X2})");
-                _predictionService.ProduceResult(value, source, 0);
-                return;
+                    if (value != "unknown")
+                    {
+                        _log.Information($"[挖宝预测] 转盘结果: {source} → {value} (bodyOff=0x{bodyOff:X2})");
+                        _predictionService.ProduceResult(value, source, 0);
+                        return;
+                    }
+                    // level 匹配但 resultByte 异常 — 可能 bodyOff 错误，继续尝试其他偏移
+                }
             }
 
-            // level 匹配但 resultByte 异常 — 可能 bodyOff 错误，继续尝试其他偏移
-        }
-    }
+            // ---- 开门匹配: body[16] = flag (0x04482c03), body[32] = round, body[40] = result ----
+            if (checkGate)
+            {
+                var flag = *(uint*)(rawData + bodyOff + 16);
 
-    /// <summary>
-    /// 尝试从 rawData 中匹配宝物库开门/路结果
-    /// </summary>
-    private void TryMatchGateResult(byte* rawData)
-    {
-        foreach (var bodyOff in CandidateBodyOffsets)
-        {
-            // matcha: body[16] = flag (0x04482c03)
-            var flag = *(uint*)(rawData + bodyOff + 16);
+                if (flag == 0x04482c03)
+                {
+                    var round = *(rawData + bodyOff + 32) + 1;
+                    var value = *(rawData + bodyOff + 40) == 1 ? "gate-open" : "gate-fail";
 
-            if (flag != 0x04482c03) continue;
-
-            var round = *(rawData + bodyOff + 32) + 1;
-            var value = *(rawData + bodyOff + 40) == 1 ? "gate-open" : "gate-fail";
-
-            _log.Information($"[挖宝预测] 开门结果: {value} (第{round}轮) (bodyOff=0x{bodyOff:X2})");
-            _predictionService.ProduceResult(value, null, round);
-            return;
+                    _log.Information($"[挖宝预测] 开门结果: {value} (第{round}轮) (bodyOff=0x{bodyOff:X2})");
+                    _predictionService.ProduceResult(value, null, round);
+                    return;
+                }
+            }
         }
     }
 }

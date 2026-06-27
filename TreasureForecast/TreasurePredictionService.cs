@@ -31,13 +31,17 @@ public class TreasurePredictionService
 
     // ---- 去重 ----
 
-    /// <summary>去重窗口（同一结果在此时间内只输出一次）</summary>
-    private static readonly TimeSpan DedupWindow = TimeSpan.FromSeconds(5);
+    /// <summary>去重窗口（同一结果在此时间内只输出一次），单位毫秒</summary>
+    private const long DedupWindowMs = 5000;
 
     /// <summary>最近产生的结果快照，用于去重</summary>
     private readonly Dictionary<string, long> _recentResultTimestamps = new();
 
     private readonly object _dedupLock = new();
+
+    /// <summary>写入计数器，达到阈值时触发过期清理</summary>
+    private int _dedupCleanupCounter;
+    private const int DedupCleanupInterval = 64;
 
     /// <summary>
     /// 产生一个挖宝结果（统一入口，由 NetworkReceiver 调用）
@@ -47,13 +51,13 @@ public class TreasurePredictionService
     {
         // 构造去重 key
         var key = $"{value}|{source ?? ""}|{round}";
-        var now = DateTimeOffset.Now.ToUnixTimeMilliseconds();
+        var now = Environment.TickCount64;
 
         lock (_dedupLock)
         {
             if (_recentResultTimestamps.TryGetValue(key, out var lastTime))
             {
-                if (now - lastTime < DedupWindow.TotalMilliseconds)
+                if (now - lastTime < DedupWindowMs)
                 {
                     // 同一结果在去重窗口内 → 跳过
                     return;
@@ -61,6 +65,27 @@ public class TreasurePredictionService
             }
 
             _recentResultTimestamps[key] = now;
+
+            // 定期清理过期条目，防止字典无限增长
+            if (++_dedupCleanupCounter >= DedupCleanupInterval)
+            {
+                _dedupCleanupCounter = 0;
+                var threshold = now - DedupWindowMs;
+                List<string>? expiredKeys = null;
+                foreach (var kvp in _recentResultTimestamps)
+                {
+                    if (kvp.Value < threshold)
+                    {
+                        expiredKeys ??= new List<string>();
+                        expiredKeys.Add(kvp.Key);
+                    }
+                }
+                if (expiredKeys != null)
+                {
+                    foreach (var k in expiredKeys)
+                        _recentResultTimestamps.Remove(k);
+                }
+            }
         }
 
         var actualSource = _currentMapName ?? source;

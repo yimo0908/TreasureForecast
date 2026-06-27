@@ -102,6 +102,9 @@ public sealed class Plugin : IDalamudPlugin
         for (int i = 0; i < Achievements.Count; i++)
             _achIndexById[Achievements[i].AchievementId] = i;
 
+        // 全部成就初始时 Max==0 → 均未初始化
+        _uninitializedCount = Achievements.Count;
+
         AchievementTracker = new AchievementTracker(GameInteropProvider);
         AchievementTracker.OnAchievementProgress += OnAchievementProgress;
 
@@ -198,6 +201,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private int _achRetryCounter;
     private int _nextUninitializedIdx;
+    private int _uninitializedCount;
     private readonly Queue<int> _pendingRefresh = new();
     private readonly Dictionary<uint, int> _achIndexById = new();
 
@@ -209,6 +213,9 @@ public sealed class Plugin : IDalamudPlugin
         if (_achIndexById.TryGetValue(id, out var idx))
         {
             var entry = Achievements[idx];
+            // 首次从 Max==0 变为 Max>0 → 未初始化计数减一
+            if (entry.Max == 0 && max > 0)
+                _uninitializedCount--;
             entry.Current = current;
             entry.Max = max;
         }
@@ -226,12 +233,8 @@ public sealed class Plugin : IDalamudPlugin
 
         _achRetryCounter++;
 
-        // 判断是否全部已初始化
-        var allInit = true;
-        foreach (var ach in Achievements)
-        {
-            if (ach.Max == 0) { allInit = false; break; }
-        }
+        // 用计数器 O(1) 判断是否全部已初始化，替代每帧线性扫描
+        var allInit = _uninitializedCount == 0;
 
         if (allInit)
         {

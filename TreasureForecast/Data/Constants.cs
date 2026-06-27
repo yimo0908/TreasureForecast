@@ -28,4 +28,8 @@ public static class Constants
     };
 
     public static readonly HashSet<ushort> TerritoryIdSet = TreasureTerritories.Select(t => t.Id).ToHashSet();
+
+    /// <summary>领地 ID → 名称 的 O(1) 查找表，替代每包 LINQ 线性扫描</summary>
+    public static readonly Dictionary<ushort, string> TerritoryNameById =
+        TreasureTerritories.ToDictionary(t => t.Id, t => t.Name);
 }

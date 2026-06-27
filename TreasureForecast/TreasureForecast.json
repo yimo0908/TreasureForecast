@@ -1,6 +1,6 @@
 {
-  "Author": "TreasureForecast",
-  "Name": "挖宝预测",
+  "Author": "yimo",
+  "Name": "TreasureForecast",
   "Punchline": "实时预测宝物库转盘召唤与开门结果",
   "Description": "基于 FFXIV 网络数据包实时预测宝物库（G10 运河/G12 梦羽/G15 育体）转盘召唤结果、开门结果。支持巡梦金库老虎机结果预测。\n命令：/tforecast 打开主窗口",
   "ApplicableVersion": "any",

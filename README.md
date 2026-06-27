@@ -22,6 +22,7 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 - 进度自动刷新：后台每 5 秒批量刷新成就进度，未初始化的成就每 0.5 秒快速轮询重试
 - 可配置：开/关不同类型预测、是否在聊天框显示、Toast 提示开关、成就追踪、历史上限、Debug 日志等
 - Debug 模式：开启后输出诊断日志（hex dump + 识别偏移量），便于排查
+- 性能优化：历史条目在写入时预计算显示文本与颜色（Draw 零分配）、领地名称 O(1) 字典查找、去重字典定期清理过期条目、成就显示列表按需缓存避免每帧 ToList
 
 ## 命令
 
@@ -108,8 +109,8 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
   - 绿色 — 中级召唤 (wheel-medium)
   - 红色 — 上级召唤 / 开门失败 (wheel-high / gate-fail)
   - 金色 — 召唤式变动 / 下底成功 (wheel-shift / dungeon-complete)
-  - 银色 — 特殊召唤 (wheel-special)
-  - 紫色 — 召唤失败 (wheel-end)
+  - 银色 — 下级召唤（特殊）(wheel-special)
+  - 紫色 — 失败 (wheel-end)
   - 亮绿 — 开门成功 (gate-open / wheel-open)
 
 ## 项目结构
