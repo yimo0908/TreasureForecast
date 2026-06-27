@@ -109,7 +109,7 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
   - 绿色 — 中级召唤 (wheel-medium)
   - 红色 — 上级召唤 / 开门失败 (wheel-high / gate-fail)
   - 金色 — 召唤式变动 / 下底成功 (wheel-shift / dungeon-complete)
-  - 银色 — 下级召唤（特殊）(wheel-special)
+  - 银色 — 特殊召唤 (wheel-special)
   - 紫色 — 失败 (wheel-end)
   - 亮绿 — 开门成功 (gate-open / wheel-open)
 
