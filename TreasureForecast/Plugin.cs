@@ -53,25 +53,21 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         PredictionService = new TreasurePredictionService();
 
-        // 创建 UI 窗口
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
 
         WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
 
-        // 注册命令
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
             HelpMessage = "打开挖宝预测主窗口"
         });
 
-        // 注册 UI 绘制
         PluginInterface.UiBuilder.Draw += WindowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
 
-        // ---- 初始化网络 Hook（统一管理） ----
         NetworkReceiver = new NetworkReceiver(
             GameInteropProvider,
             Log,
@@ -80,10 +76,8 @@ public sealed class Plugin : IDalamudPlugin
             Configuration);
         NetworkReceiver.Initialize();
 
-        // ---- 订阅预测事件 ----
         PredictionService.OnTreasureResult += OnTreasureResult;
 
-        // ---- 初始化成就进度跟踪 ----
         var titleSheet = DataManager.GameData.GetExcelSheet<Title>();
         Achievements = Constants.AchievementIds
             .Select((id, i) =>
@@ -111,7 +105,6 @@ public sealed class Plugin : IDalamudPlugin
         // 每帧检查未收到数据的成就，自动重发请求
         Framework.Update += OnFrameworkUpdate;
 
-        // ---- 订阅副本完成事件 ----
         DutyState.DutyCompleted += OnDutyCompleted;
         DutyState.DutyStarted += OnDutyStarted;
 
@@ -145,38 +138,16 @@ public sealed class Plugin : IDalamudPlugin
         CommandManager.RemoveHandler(CommandName);
     }
 
-    // 处理预测结果
     private void OnTreasureResult(TreasureResultDTO dto)
     {
         try
         {
             if (dto == null) return;
 
-            // 根据配置过滤不同来源/类型的预测
-            if (dto.Value.StartsWith("wheel-"))
-            {
-                // 巡梦金库的转盘使用 Hypnoslot 开关
-                if (dto.Source == "巡梦金库")
-                {
-                    if (!Configuration.EnableHypnoslot) return;
-                }
-                else
-                {
-                    if (!Configuration.EnableWheelPrediction) return;
-                }
-            }
-            else if (dto.Value.StartsWith("gate-"))
-            {
-                if (!Configuration.EnableGatePrediction) return;
-            }
-
-            // 更新主窗口历史与统计
             MainWindow.AddResult(dto);
 
-            // 获取结果文本
             var text = ResultFormatter.GetTreasureResultText(dto.Value);
 
-            // 显示游戏内提示（GimmickHint）
             if (Configuration.ShowToastResult)
             {
                 var isFailure = text is "失败" or "召唤失败";
@@ -185,7 +156,6 @@ public sealed class Plugin : IDalamudPlugin
                     isFailure ? RaptureAtkModule.TextGimmickHintStyle.Warning : RaptureAtkModule.TextGimmickHintStyle.Info);
             }
 
-            // 在聊天框显示（如果已开启）
             if (Configuration.ShowInChat)
             {
                 var source = string.IsNullOrEmpty(dto.Source) ? "挖宝预测" : dto.Source;
@@ -269,28 +239,14 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    /// <summary>
-    /// 在游戏屏幕上显示 Gimmick 提示（屏幕中央偏上位置的气泡提示）
-    /// </summary>
-    /// <param name="text">显示文本</param>
-    /// <param name="style">提示样式</param>
-    /// <param name="duration">显示时长（秒）</param>
     private unsafe void ShowGimmickHint(
         string text,
         RaptureAtkModule.TextGimmickHintStyle style = RaptureAtkModule.TextGimmickHintStyle.Info,
         int duration = 5)
     {
-        try
-        {
-            var raptureAtkModule = RaptureAtkModule.Instance();
-            if (raptureAtkModule == null) return;
-
-            raptureAtkModule->ShowTextGimmickHint(text, style, duration);
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "显示 GimmickHint 时出错");
-        }
+        var module = RaptureAtkModule.Instance();
+        if (module != null)
+            module->ShowTextGimmickHint(text, style, duration);
     }
 
     public void ExportAchievementProgress()
@@ -324,7 +280,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
-        // 支持: /tforecast [config]
+        // /tforecast [config]
         if (string.IsNullOrWhiteSpace(args))
         {
             ToggleMainUi();

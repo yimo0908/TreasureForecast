@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface;
 using Dalamud.Interface.Utility;
@@ -17,11 +18,32 @@ public class MainWindow : Window, IDisposable
     private readonly Plugin _plugin;
     private bool _isInsideTreasureDungeon;
 
-    // ============================================================
-    // 历史记录 —— 预计算缓存（避免每帧 ToString + 字符串拼接）
-    // ============================================================
+    // 样式常量
+    private static readonly Vector4 PixelWindowBg = new(0.06f, 0.06f, 0.08f, 0.96f);
+    private static readonly Vector4 PixelChildBg   = new(0.03f, 0.03f, 0.05f, 1f);
+    private static readonly Vector4 PixelBorder    = new(0.22f, 0.22f, 0.28f, 0.5f);
+    private static readonly Vector4 PixelDim       = new(0.35f, 0.35f, 0.4f, 1f);
+    private static readonly Vector4 PixelAccent    = new(0.4f, 0.85f, 1.0f, 1f);
+    private static readonly Vector4 PixelTabActive = new(0.12f, 0.12f, 0.16f, 1f);
+    private static readonly Vector4 PixelTabHover  = new(0.08f, 0.08f, 0.12f, 1f);
+    private static readonly Vector4 PixelButtonBg  = new(0.1f, 0.1f, 0.14f, 1f);
 
-    /// <summary>历史条目：在 Add 时一次性计算显示文本和颜色，Draw 时零分配</summary>
+    // 历史结果颜色
+    private static readonly Vector4 ColorWheelLow     = new(0.5f,  0.6f,  1.0f, 1);
+    private static readonly Vector4 ColorWheelMedium  = new(0.3f,  0.9f,  0.5f, 1);
+    private static readonly Vector4 ColorRed          = new(1.0f,  0.4f,  0.4f, 1);
+    private static readonly Vector4 ColorGold         = new(1.0f,  0.78f, 0.25f, 1);
+    private static readonly Vector4 ColorWheelSpecial = new(0.72f, 0.72f, 0.78f, 1);
+    private static readonly Vector4 ColorWheelEnd     = new(0.78f, 0.45f, 1.0f, 1);
+    private static readonly Vector4 ColorGateOpen     = new(0.3f,  0.9f,  0.35f, 1);
+    private static readonly Vector4 ColorDefault      = new(0.85f, 0.85f, 0.85f, 1);
+    private static readonly Vector4 ColorGray         = new(0.45f, 0.45f, 0.5f, 1);
+    private static readonly Vector4 ColorTitleComplete   = new(0.2f,  0.9f,  0.25f, 1);
+    private static readonly Vector4 ColorTitleIncomplete = new(0.45f, 0.45f, 0.5f, 1);
+
+    private const int PushedColorCount = 10;
+    private const int PushedVarCount = 8;
+
     private readonly struct HistoryEntry
     {
         public HistoryEntry() { }
@@ -31,36 +53,23 @@ public class MainWindow : Window, IDisposable
     }
 
     private readonly List<HistoryEntry> _results = new();
-
-    /// <summary>非分割线条目计数，替代每 Add 时 LINQ Count</summary>
     private int _nonSeparatorCount;
 
-    // ============================================================
-    // 成就进度 —— 过滤结果缓存（避免每帧 ToList 分配）
-    // ============================================================
-
+    // 成就进度过滤缓存
     private bool _cachedTrackingEnabled;
     private readonly bool[] _cachedTracked = new bool[10];
     private List<AchievementProgressInfo> _cachedAchDisplay = new();
     private bool _achFilterValid;
 
-    // ============================================================
-    // 静态颜色常量（避免每帧 new Vector4）
-    // ============================================================
+    private int _currentTab;
+    private readonly StringBuilder _sb = new();
 
-    private static readonly Vector4 ColorWheelLow        = new(0.6f,  0.6f,  1.0f, 1);   // 蓝色 - 下级
-    private static readonly Vector4 ColorWheelMedium     = new(0.4f,  1.0f,  0.6f, 1);   // 绿色 - 中级
-    private static readonly Vector4 ColorWheelHigh       = new(1.0f,  0.3f,  0.3f, 1);   // 红色 - 上级
-    private static readonly Vector4 ColorWheelShift      = new(1.0f,  0.8f,  0.2f, 1);   // 金色 - 变动
-    private static readonly Vector4 ColorWheelSpecial    = new(0.75f, 0.75f, 0.8f, 1);   // 银色 - 特殊
-    private static readonly Vector4 ColorWheelEnd        = new(0.8f,  0.4f,  1.0f, 1);   // 紫色 - 失败
-    private static readonly Vector4 ColorGateOpen        = new(0.3f,  1.0f,  0.3f, 1);   // 亮绿 - 开门
-    private static readonly Vector4 ColorGateFail        = new(1.0f,  0.3f,  0.3f, 1);   // 红色 - 开门失败
-    private static readonly Vector4 ColorDungeonComplete = new(1.0f,  0.8f,  0.2f, 1);   // 金色 - 下底成功
-    private static readonly Vector4 ColorDefault         = new(1,    1,    1,    1);
-    private static readonly Vector4 ColorGray            = new(0.6f,  0.6f,  0.6f, 1);
-    private static readonly Vector4 ColorTitleComplete   = new(0.2f,  1f,   0.2f, 1f);
-    private static readonly Vector4 ColorTitleIncomplete = new(0.5f,  0.5f,  0.5f, 1f);
+    private static readonly string[] TabLabels = { "历史", "成就" };
+
+    private static readonly uint ProgressColorComplete = ImGui.GetColorU32(new Vector4(0.2f,  0.9f,  0.25f, 1f));
+    private static readonly uint ProgressColorHigh     = ImGui.GetColorU32(new Vector4(0.3f,  0.7f,  1f,   1f));
+    private static readonly uint ProgressColorMid      = ImGui.GetColorU32(new Vector4(1f,   0.78f, 0.25f, 1f));
+    private static readonly uint ProgressColorLow      = ImGui.GetColorU32(new Vector4(1f,   0.35f, 0.35f, 1f));
 
     public MainWindow(Plugin plugin)
         : base("挖宝预测##TreasureForecastMain", ImGuiWindowFlags.NoScrollbar)
@@ -83,11 +92,35 @@ public class MainWindow : Window, IDisposable
 
     public void Dispose() { }
 
-    // ============================================================
-    // 历史记录管理
-    // ============================================================
+    public override void PreDraw()
+    {
+        ImGui.PushStyleColor(ImGuiCol.WindowBg,       PixelWindowBg);
+        ImGui.PushStyleColor(ImGuiCol.ChildBg,        PixelChildBg);
+        ImGui.PushStyleColor(ImGuiCol.Border,         PixelBorder);
+        ImGui.PushStyleColor(ImGuiCol.Separator,      PixelDim);
+        ImGui.PushStyleColor(ImGuiCol.FrameBg,        PixelChildBg);
+        ImGui.PushStyleColor(ImGuiCol.Button,         PixelButtonBg);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered,  PixelTabHover);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive,   PixelTabActive);
+        ImGui.PushStyleColor(ImGuiCol.Text,           ColorDefault);
+        ImGui.PushStyleColor(ImGuiCol.PlotHistogram,  PixelAccent);
 
-    /// <summary>从 DTO 构建预计算的 HistoryEntry（仅在 Add 时调用一次）</summary>
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding,    0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding,     0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameRounding,     0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.GrabRounding,      0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.TabRounding,       0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.ScrollbarRounding, 0f);
+        ImGui.PushStyleVar(ImGuiStyleVar.FrameBorderSize,   1f);
+        ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize,  1f);
+    }
+
+    public override void PostDraw()
+    {
+        ImGui.PopStyleVar(PushedVarCount);
+        ImGui.PopStyleColor(PushedColorCount);
+    }
+
     private static HistoryEntry CreateEntry(TreasureResultDTO dto)
     {
         if (dto.Value == "separator")
@@ -112,14 +145,14 @@ public class MainWindow : Window, IDisposable
     {
         "wheel-low"         => ColorWheelLow,
         "wheel-medium"      => ColorWheelMedium,
-        "wheel-high"        => ColorWheelHigh,
-        "wheel-shift"       => ColorWheelShift,
+        "wheel-high"        => ColorRed,
+        "wheel-shift"       => ColorGold,
         "wheel-special"     => ColorWheelSpecial,
         "wheel-end"         => ColorWheelEnd,
         "wheel-open"        => ColorGateOpen,
         "gate-open"         => ColorGateOpen,
-        "gate-fail"         => ColorGateFail,
-        "dungeon-complete"  => ColorDungeonComplete,
+        "gate-fail"         => ColorRed,
+        "dungeon-complete"  => ColorGold,
         _                   => ColorDefault
     };
 
@@ -128,17 +161,14 @@ public class MainWindow : Window, IDisposable
         _isInsideTreasureDungeon = false;
         _results.Add(CreateEntry(new TreasureResultDTO { Value = "dungeon-complete", Timestamp = DateTime.Now }));
         _results.Add(new HistoryEntry { Value = "separator" });
-        _nonSeparatorCount++; // dungeon-complete 计入非分割线
+        _nonSeparatorCount++;
     }
 
     public void AddResult(TreasureResultDTO dto)
     {
-        // 检测新进挖宝图：首次收到非结束的转盘结果时插入分割线
         if (dto.Value.StartsWith("wheel-") && dto.Value != "wheel-end" && !_isInsideTreasureDungeon)
         {
             _isInsideTreasureDungeon = true;
-
-            // 避免与 AddDutyCompleteSeparator 已插入的分割线重复
             if (!(_results.Count > 0 && _results[^1].Value == "separator"))
                 _results.Add(new HistoryEntry { Value = "separator" });
         }
@@ -146,13 +176,9 @@ public class MainWindow : Window, IDisposable
         _results.Add(CreateEntry(dto));
         _nonSeparatorCount++;
 
-        // 检测挖宝结束
         if (dto.Value == "wheel-end")
-        {
             _isInsideTreasureDungeon = false;
-        }
 
-        // 限制历史数量（分割线不计入限制），用计数器替代 LINQ Count
         var maxHistory = _plugin.Configuration.MaxHistoryCount;
         while (_nonSeparatorCount > maxHistory)
         {
@@ -168,62 +194,148 @@ public class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
-        if (ImGui.BeginTabBar("##mainTabs"))
+        using var fontScope = Plugin.PluginInterface.UiBuilder.MonoFontHandle.Push();
+
+        DrawPixelTabs();
+        ImGuiHelpers.ScaledDummy(2);
+
+        switch (_currentTab)
         {
-            if (ImGui.BeginTabItem("历史记录"))
-            {
-                DrawHistory();
-                ImGui.EndTabItem();
-            }
-
-            if (ImGui.BeginTabItem("成就进度"))
-            {
-                DrawAchievementProgress();
-                ImGui.EndTabItem();
-            }
-
-            ImGui.EndTabBar();
+            case 0: DrawHistory(); break;
+            case 1: DrawAchievementProgress(); break;
         }
+    }
+
+    private void DrawPixelTabs()
+    {
+        for (int i = 0; i < TabLabels.Length; i++)
+        {
+            if (i > 0) ImGui.SameLine();
+            var active = i == _currentTab;
+
+            ImGui.PushStyleColor(ImGuiCol.Button,        active ? PixelTabActive : new Vector4(0, 0, 0, 0));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, active ? PixelTabActive : PixelTabHover);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  active ? PixelTabActive : PixelTabHover);
+            ImGui.PushStyleColor(ImGuiCol.Text,          active ? PixelAccent    : PixelDim);
+
+            if (ImGui.SmallButton($" {TabLabels[i]} ##pixelTab{i}"))
+                _currentTab = i;
+
+            ImGui.PopStyleColor(4);
+        }
+    }
+
+    private void DrawPixelSeparator()
+    {
+        var avail = ImGui.GetContentRegionAvail().X;
+        var charWidth = ImGui.CalcTextSize("─").X;
+        if (charWidth <= 0) return;
+        var count = Math.Max(1, (int)(avail / charWidth));
+
+        _sb.Clear();
+        _sb.Append('─', count);
+        ImGui.TextColored(PixelDim, _sb.ToString());
+    }
+
+    private void DrawPixelProgress(float ratio, uint current, uint max, string titleName, bool isComplete)
+    {
+        const int barWidth = 16;
+        var filled = Math.Clamp((int)Math.Round(ratio * barWidth), 0, barWidth);
+
+        var barColor = ImGui.ColorConvertU32ToFloat4(GetProgressColor(ratio));
+
+        _sb.Clear();
+        _sb.Append('[');
+        _sb.Append('█', filled);
+        _sb.Append('░', barWidth - filled);
+        _sb.Append("] ");
+        _sb.Append(current);
+        _sb.Append(" / ");
+        _sb.Append(max);
+        _sb.Append(" (");
+        _sb.Append((int)(ratio * 100));
+        _sb.Append("%)");
+
+        ImGui.TextColored(barColor, _sb.ToString());
+
+        if (titleName.Length > 0)
+        {
+            ImGui.SameLine();
+            ImGui.TextColored(isComplete ? ColorTitleComplete : ColorTitleIncomplete, titleName);
+        }
+    }
+
+    private void DrawSectionHeader(string title, Action? buttonAction = null)
+    {
+        ImGui.TextColored(PixelAccent, title);
+        ImGui.SameLine();
+        buttonAction?.Invoke();
+        ImGuiHelpers.ScaledDummy(2);
+        DrawPixelSeparator();
+        ImGuiHelpers.ScaledDummy(2);
     }
 
     private void DrawHistory()
     {
-        ImGui.Text("=== 历史记录 ===");
-        ImGui.SameLine();
-
-        // Clear 按钮
-        if (ImGui.SmallButton("清空"))
+        DrawSectionHeader("▌ 历史记录", () =>
         {
-            _results.Clear();
-            _nonSeparatorCount = 0;
-            _isInsideTreasureDungeon = false;
-        }
-        ImGuiHelpers.ScaledDummy(4);
+            if (ImGui.SmallButton("导出"))
+                ExportHistory();
+            ImGui.SameLine();
+            if (ImGui.SmallButton("清空"))
+            {
+                _results.Clear();
+                _nonSeparatorCount = 0;
+                _isInsideTreasureDungeon = false;
+            }
+        });
 
         using var child = ImRaii.Child("##historyList", Vector2.Zero, true);
         if (!child.Success) return;
 
-        // 倒序显示（最新的在上面）—— 使用预计算的 DisplayText 和 Color，零分配
         for (int i = _results.Count - 1; i >= 0; i--)
         {
             var entry = _results[i];
 
-            // 分割线
             if (entry.Value == "separator")
             {
-                ImGuiHelpers.ScaledDummy(2);
-                ImGui.Separator();
-                ImGuiHelpers.ScaledDummy(2);
+                ImGuiHelpers.ScaledDummy(1);
+                DrawPixelSeparator();
+                ImGuiHelpers.ScaledDummy(1);
                 continue;
             }
 
+            if (entry.Value == "dungeon-complete")
+            {
+                ImGui.TextColored(entry.Color, $"  {entry.DisplayText}");
+                continue;
+            }
+
+            ImGui.TextColored(PixelDim, "»");
+            ImGui.SameLine();
             ImGui.TextColored(entry.Color, entry.DisplayText);
         }
     }
 
-    // ============================================================
-    // 成就进度
-    // ============================================================
+    private void ExportHistory()
+    {
+        if (_results.Count == 0)
+        {
+            Plugin.Chat.PrintError("没有可导出的历史记录");
+            return;
+        }
+
+        var sb = new StringBuilder();
+        for (int i = 0; i < _results.Count; i++)
+        {
+            var entry = _results[i];
+            if (sb.Length > 0) sb.Append('\n');
+            sb.Append(entry.Value == "separator" ? "====================" : entry.DisplayText);
+        }
+
+        ImGui.SetClipboardText(sb.ToString());
+        Plugin.Chat.Print("历史记录已导出到剪贴板");
+    }
 
     private void DrawAchievementProgress()
     {
@@ -236,11 +348,8 @@ public class MainWindow : Window, IDisposable
 
         var cfg = _plugin.Configuration;
 
-        // 检查过滤参数是否变化，仅在变化时重新计算（避免每帧 ToList 分配）
         if (!_achFilterValid || HasFilterChanged(cfg))
-        {
             UpdateAchDisplayCache(cfg, achList);
-        }
 
         if (_cachedAchDisplay.Count == 0)
         {
@@ -248,55 +357,43 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        ImGui.BeginChild("##achievementList", Vector2.Zero, true);
-        var barWidth = ImGui.GetContentRegionAvail().X;
+        DrawSectionHeader("▌ 成就进度", () =>
+        {
+            if (ImGui.SmallButton("导出"))
+                _plugin.ExportAchievementProgress();
+        });
+
+        using var child = ImRaii.Child("##achievementList", Vector2.Zero, true);
+        if (!child.Success) return;
+
         var first = true;
 
         foreach (var ach in _cachedAchDisplay)
         {
             if (!first)
             {
-                ImGui.Separator();
-                ImGuiHelpers.ScaledDummy(4);
+                ImGuiHelpers.ScaledDummy(2);
+                DrawPixelSeparator();
+                ImGuiHelpers.ScaledDummy(2);
             }
             first = false;
 
-            ImGui.Text(ach.AchievementName);
+            ImGui.TextColored(ColorDefault, $"  {ach.AchievementName}");
 
             if (ach.Max > 0)
             {
-                var ratio = ach.Ratio;
-
-                ImGui.PushStyleColor(ImGuiCol.PlotHistogram, GetProgressColor(ratio));
-                var progressWidth = ach.TitleName.Length > 0 ? barWidth * 0.65f : barWidth;
-                ImGui.ProgressBar(ratio, new Vector2(progressWidth, 22f),
-                    $"{ach.Current} / {ach.Max} ({ratio * 100:F0}%)");
-                ImGui.PopStyleColor();
-
-                if (ach.TitleName.Length > 0)
-                {
-                    ImGui.SameLine();
-                    var titleColor = ach.IsComplete ? ColorTitleComplete : ColorTitleIncomplete;
-                    ImGui.TextColored(titleColor, ach.TitleName);
-                }
+                ImGuiHelpers.ScaledDummy(1);
+                ImGui.Text("  ");
+                ImGui.SameLine();
+                DrawPixelProgress(ach.Ratio, ach.Current, ach.Max, ach.TitleName, ach.IsComplete);
             }
             else
             {
-                ImGui.TextColored(ColorGray, "正在获取数据...");
+                ImGui.TextColored(ColorGray, "  正在获取数据...");
             }
-
-            ImGuiHelpers.ScaledDummy(4);
-        }
-
-        ImGui.EndChild();
-
-        if (ImGui.Button("导出"))
-        {
-            _plugin.ExportAchievementProgress();
         }
     }
 
-    /// <summary>检查成就过滤参数是否与缓存不一致</summary>
     private bool HasFilterChanged(Configuration cfg)
     {
         if (_cachedTrackingEnabled != cfg.EnableAchievementTracking) return true;
@@ -310,7 +407,6 @@ public class MainWindow : Window, IDisposable
         return false;
     }
 
-    /// <summary>重新计算成就显示列表缓存</summary>
     private void UpdateAchDisplayCache(Configuration cfg, List<AchievementProgressInfo> achList)
     {
         _cachedTrackingEnabled = cfg.EnableAchievementTracking;
@@ -318,24 +414,11 @@ public class MainWindow : Window, IDisposable
         for (int i = 0; i < tracked.Length && i < _cachedTracked.Length; i++)
             _cachedTracked[i] = tracked[i];
 
-        if (cfg.EnableAchievementTracking)
-        {
-            _cachedAchDisplay = achList
-                .Where((a, i) => i < tracked.Length && tracked[i])
-                .ToList();
-        }
-        else
-        {
-            _cachedAchDisplay = achList.ToList();
-        }
+        _cachedAchDisplay = cfg.EnableAchievementTracking
+            ? achList.Where((a, i) => i < tracked.Length && tracked[i]).ToList()
+            : achList.ToList();
         _achFilterValid = true;
     }
-
-    /// <summary>根据进度返回对应颜色：红(&lt;25%)→黄(&lt;50%)→蓝(&lt;100%)→绿(=100%)。</summary>
-    private static readonly uint ProgressColorComplete = ImGui.GetColorU32(new Vector4(0.2f,  1f,   0.2f,  1f));
-    private static readonly uint ProgressColorHigh    = ImGui.GetColorU32(new Vector4(0.3f,  0.7f,  1f,   1f));
-    private static readonly uint ProgressColorMid     = ImGui.GetColorU32(new Vector4(1f,   0.85f, 0.2f,  1f));
-    private static readonly uint ProgressColorLow     = ImGui.GetColorU32(new Vector4(1f,   0.3f,  0.3f,  1f));
 
     private static uint GetProgressColor(float progress) => progress switch
     {

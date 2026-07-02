@@ -76,9 +76,10 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 
 - 插件在加载和配置变更时会记录信息到 Dalamud 日志
 - 开启设置中的 **"Debug 日志输出"** 后：
-  - 每 200 个 IPC 数据包输出一次前 48 字节的 hex dump
-  - 每 50 个 ActorControl 包输出一次类别摘要
-  - 每次匹配成功输出包含 `bodyOff=0x??` 的日志，便于验证偏移量
+  - 转盘/开门匹配成功时输出 80 字节 hex dump 及各字段偏移量标注，便于验证
+  - 仅在宝藏领地输出 ActorControl 类别摘要（每 50 包），避免无关区域刷屏
+  - 每次 ActorControl category=407 事件输出详细参数
+  - 转盘 level 签名匹配但结果字节未知时输出 Warning，提示可能需要更新枚举
 
 ## 输出样例
 

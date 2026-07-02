@@ -11,6 +11,8 @@ public class ConfigWindow : Window, IDisposable
     private readonly Plugin _plugin;
     private readonly Configuration _configuration;
 
+    private static readonly Vector4 SectionColor = new(0, 1, 1, 1);
+
     public ConfigWindow(Plugin plugin) : base("挖宝预测 设置##TreasureForecastConfig")
     {
         Size = new Vector2(360, 420);
@@ -26,68 +28,41 @@ public class ConfigWindow : Window, IDisposable
     {
         var changed = false;
 
-        // ---- 预测开关 ----
-        ImGui.TextColored(new Vector4(0, 1, 1, 1), "预测开关");
+        ImGui.TextColored(SectionColor, "预测开关");
         ImGui.Separator();
         ImGuiHelpers.ScaledDummy(4);
 
-        var wheel = _configuration.EnableWheelPrediction;
-        if (ImGui.Checkbox("转盘结果预测 (G10/G12/G15)", ref wheel))
-        {
-            _configuration.EnableWheelPrediction = wheel;
-            changed = true;
-        }
+        changed |= DrawCheckbox("转盘结果预测 (G10/G12/G15)",
+            () => _configuration.EnableWheelPrediction, v => _configuration.EnableWheelPrediction = v);
         ImGuiHelpers.ScaledDummy(2);
 
-        var gate = _configuration.EnableGatePrediction;
-        if (ImGui.Checkbox("开门/路结果预测", ref gate))
-        {
-            _configuration.EnableGatePrediction = gate;
-            changed = true;
-        }
+        changed |= DrawCheckbox("开门/路结果预测",
+            () => _configuration.EnableGatePrediction, v => _configuration.EnableGatePrediction = v);
         ImGuiHelpers.ScaledDummy(2);
 
-        var hypno = _configuration.EnableHypnoslot;
-        if (ImGui.Checkbox("巡梦金库老虎机预测", ref hypno))
-        {
-            _configuration.EnableHypnoslot = hypno;
-            changed = true;
-        }
+        changed |= DrawCheckbox("巡梦金库老虎机预测",
+            () => _configuration.EnableHypnoslot, v => _configuration.EnableHypnoslot = v);
 
         ImGuiHelpers.ScaledDummy(8);
 
-        // ---- 显示设置 ----
-        ImGui.TextColored(new Vector4(0, 1, 1, 1), "输出设置");
+        ImGui.TextColored(SectionColor, "输出设置");
         ImGui.Separator();
         ImGuiHelpers.ScaledDummy(4);
 
-        var chat = _configuration.ShowInChat;
-        if (ImGui.Checkbox("在聊天框显示结果", ref chat))
-        {
-            _configuration.ShowInChat = chat;
-            changed = true;
-        }
+        changed |= DrawCheckbox("在聊天框显示结果",
+            () => _configuration.ShowInChat, v => _configuration.ShowInChat = v);
         ImGuiHelpers.ScaledDummy(2);
 
-        var toast = _configuration.ShowToastResult;
-        if (ImGui.Checkbox("Toast2显示结果", ref toast))
-        {
-            _configuration.ShowToastResult = toast;
-            changed = true;
-        }
+        changed |= DrawCheckbox("Toast2显示结果",
+            () => _configuration.ShowToastResult, v => _configuration.ShowToastResult = v);
         ImGuiHelpers.ScaledDummy(2);
 
-        var dungeonComplete = _configuration.ShowDungeonCompleteMessage;
-        if (ImGui.Checkbox("副本完成时提示下底成功", ref dungeonComplete))
-        {
-            _configuration.ShowDungeonCompleteMessage = dungeonComplete;
-            changed = true;
-        }
+        changed |= DrawCheckbox("副本完成时提示下底成功",
+            () => _configuration.ShowDungeonCompleteMessage, v => _configuration.ShowDungeonCompleteMessage = v);
 
         ImGuiHelpers.ScaledDummy(8);
 
-        // ---- 成就追踪 ----
-        ImGui.TextColored(new Vector4(0, 1, 1, 1), "成就追踪");
+        ImGui.TextColored(SectionColor, "成就追踪");
         ImGui.Separator();
         ImGuiHelpers.ScaledDummy(4);
 
@@ -116,21 +91,25 @@ public class ConfigWindow : Window, IDisposable
 
         ImGuiHelpers.ScaledDummy(8);
 
-        // ---- 调试 ----
         ImGui.TextColored(new Vector4(1, 1, 0, 1), "调试");
         ImGui.Separator();
         ImGuiHelpers.ScaledDummy(4);
 
-        var debugLog = _configuration.EnableDebugLog;
-        if (ImGui.Checkbox("Debug 日志输出（诊断网络数据包）", ref debugLog))
-        {
-            _configuration.EnableDebugLog = debugLog;
-            changed = true;
-        }
+        changed |= DrawCheckbox("Debug 日志输出（诊断网络数据包）",
+            () => _configuration.EnableDebugLog, v => _configuration.EnableDebugLog = v);
 
         if (changed)
-        {
             _configuration.Save();
+    }
+
+    private bool DrawCheckbox(string label, Func<bool> get, Action<bool> set)
+    {
+        var val = get();
+        if (ImGui.Checkbox(label, ref val))
+        {
+            set(val);
+            return true;
         }
+        return false;
     }
 }
