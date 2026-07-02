@@ -29,6 +29,7 @@ internal unsafe class NetworkReceiver : IDisposable
         Preserve = 158,
         Reroll = 159,
         End = 160,
+        Resume = 161,
     }
 
     private enum ShiftingWheelResultType : byte
@@ -156,12 +157,20 @@ internal unsafe class NetworkReceiver : IDisposable
 
     private void TrySetCurrentMapName()
     {
-        if (_predictionService.HasCurrentMapName) return;
         var territoryId = (ushort)_clientState.TerritoryType;
 
-        if (territoryId == _lastTerritoryId && !_isTreasureTerritory) return;
-        _lastTerritoryId = territoryId;
+        // 领地未变化：仅在地图名被 wheel-end/dungeon-complete 清除后重新设置
+        if (territoryId == _lastTerritoryId)
+        {
+            if (_isTreasureTerritory && !_predictionService.HasCurrentMapName)
+            {
+                _predictionService.SetCurrentMapName(Constants.TerritoryNameById[territoryId]);
+            }
+            return;
+        }
 
+        // 领地变化：更新缓存与宝藏领地标记
+        _lastTerritoryId = territoryId;
         if (Constants.TerritoryNameById.TryGetValue(territoryId, out var name))
         {
             _isTreasureTerritory = true;
@@ -193,17 +202,20 @@ internal unsafe class NetworkReceiver : IDisposable
                 _log.Debug($"[诊断] ActorControl #{_actorControlPacketCount}: cat={category} a1={arg1} a2={arg2} a3={arg3} a4={arg4} terr={territoryId}");
             }
 
-            // 巡梦金库老虎机 (category = 407, 仅在 territory 1279)
+            // ---- 巡梦金库老虎机 诊断日志 (category = 407, 仅 Debug 模式) ----
+            // 不受 EnableHypnoslot / territory 限制，便于排查所有 407 事件
+            if (_configuration.EnableDebugLog && category == 407)
+            {
+                var resultByte = (byte)arg1;
+                var enumName = Enum.IsDefined(typeof(HypnoslotResultType), resultByte)
+                    ? ((HypnoslotResultType)resultByte).ToString()
+                    : $"Unknown(0x{resultByte:X2})";
+                _log.Information($"[Hypnoslot] arg1={arg1} byte={resultByte} ({enumName}) a2={arg2} a3={arg3} a4={arg4} terr={territoryId}");
+            }
+
+            // ---- 巡梦金库老虎机 (category = 407, 仅在 territory 1279) ----
             if (category == 407 && territoryId == 1279 && _configuration.EnableHypnoslot)
             {
-                if (_configuration.EnableDebugLog)
-                {
-                    var enumName = Enum.IsDefined(typeof(HypnoslotResultType), (byte)arg1)
-                        ? ((HypnoslotResultType)(byte)arg1).ToString()
-                        : "Unknown";
-                    _log.Information($"[Hypnoslot] arg1={arg1} ({enumName}) a2={arg2} a3={arg3} a4={arg4} terr={territoryId}");
-                }
-
                 var result = (HypnoslotResultType)arg1;
                 switch (result)
                 {
@@ -211,6 +223,7 @@ internal unsafe class NetworkReceiver : IDisposable
                     case HypnoslotResultType.AllSame:
                     case HypnoslotResultType.Preserve:
                     case HypnoslotResultType.Reroll:
+                    case HypnoslotResultType.Resume:
                         _predictionService.ProduceResult("wheel-open", "巡梦金库", 0);
                         break;
                     case HypnoslotResultType.End:
