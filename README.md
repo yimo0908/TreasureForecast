@@ -7,16 +7,19 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 - 宝物库转盘召唤结果（G10 / G12 / G15）
 - 宝物库开门/路结果（成功 / 失败）
 - 巡梦金库（Hypnoslot）老虎机结果
+- 选门开门地图回退记录：当玩家未进动画导致无预测网络包时，通过 Hook logmessage 回退补记开门/失败记录
 - 在主窗口显示带时间戳的历史记录，可选择在聊天框输出简短提示
 - 成就进度追踪：Hook `ReceiveAchievementProgress` 展示 10 个宝藏副本对应成就的完成进度，支持自选追踪，并提供一键导出到剪贴板
-- 副本完成检测：低延迟识别宝藏副本完成事件，输出下底成功提示并写入历史记录
+- 副本完成/团灭检测：低延迟识别宝藏副本完成与团灭事件，均写入历史记录
 - 历史自动分隔：进入宝藏副本时自动插入分隔线，便于区分每次下底历程
 
 ## 主要特性
 
 - 实时预测：Hook `HandleActorControlPacket` 和 `PacketDispatcher.OnReceivePacket` 双通道捕获网络数据包
 - 成就进度追踪：通过 FFXIVClientStructs Hook 捕获 `ReceiveAchievementProgress`，支持 4 色进度条
-- 副本完成检测：使用 `IDutyState.DutyCompleted` 事件，覆盖 G8～G18 共 10 个宝藏副本
+- 副本完成/团灭检测：使用 `IDutyState.DutyCompleted` / `IDutyState.DutyWiped` 事件，覆盖 G8～G18 共 10 个宝藏副本；完成与团灭均写入历史记录
+- 选门地图回退：在选门开门地图（588/712/725/879/1000/1123）中，当玩家未进动画导致无预测网络包时，通过 Hook `RaptureLogModule.ShowLogMessageUInt` 拦截 "打开了通往第{n}区的大门！" logmessage（ID 6998/9365），直接从 `value` 参数获取轮数并补记开门记录；退出地图时若无失败网络包且无团灭/完成事件，则补记一条失败记录
+- 历史去重：开门/关门结果在写入历史记录时对比上一条，相同 Value 和轮数则跳过，避免重复
 - 不依赖可变 opcode：通过固定字节特征（level 值 / 标志位）识别事件
 - 自动去重：5 秒内同一结果只触发一次，避免游戏回调重复导致重复输出
 - 进度自动刷新：后台每 5 秒批量刷新成就进度，未初始化的成就每 0.5 秒快速轮询重试
@@ -72,13 +75,22 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 - category = 407 且 TerritoryType = 1279（限定地图）
 - 根据 arg1 映射 HypnoslotResultType（156=AllDiff, 157=AllSame, 158=Preserve, 159=Reroll → wheel-open，160=End → wheel-end）
 
+### 选门开门地图回退（Door Selection Fallback）
+
+选门开门地图（TerritoryType: 588/712/725/879/1000/1123）中，当玩家未进动画时不会产生预测网络包。此时通过以下两条回退机制补记历史记录：
+
+1. **开门回退**：Hook `RaptureLogModule.ShowLogMessageUInt`，当 `logMessageID` 为 6998（6 区版）或 9365（4 区版）时，`value` 参数直接即轮数（Case(1)→第二区→round=1，Case(2)→第三区→round=2，…），静默新增一条 "开门（第 value 轮）" 历史记录。该记录不播报、不聊天输出，仅写入历史列表。
+2. **退出失败回退**：当从选门地图退出（领地变动）时，若本次会话未收到 gate-fail 网络包且未发生 `DutyWiped` / `DutyCompleted` 事件，则取上一条历史记录的轮数 X，静默新增一条 "失败（第 X+1 轮）" 历史记录。
+
+两条回退记录均通过 `MainWindow.AddResult` 的去重逻辑（对比上一条非分割线记录的 Value 和 Round）确保不重复。
+
 ## 日志与调试
 
 - 插件在加载和配置变更时会记录信息到 Dalamud 日志
 - 开启设置中的 **"Debug 日志输出"** 后：
   - 转盘/开门匹配成功时输出 80 字节 hex dump 及各字段偏移量标注，便于验证
   - 仅在宝藏领地输出 ActorControl 类别摘要（每 50 包），避免无关区域刷屏
-  - 每次 ActorControl category=407 事件输出详细参数
+  - 仅在宝藏领地输出 ActorControl category=407 事件详细参数
   - 转盘 level 签名匹配但结果字节未知时输出 Warning，提示可能需要更新枚举
 
 ## 输出样例
@@ -89,14 +101,20 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
   [20:58:10] [宝物库] 开门 (第1轮)
   [20:57:55] [巡梦金库] 成功
   [20:50:01] ❀❀下底成功❀❀
+  [20:45:30] 挖宝也能团灭？回家吧，孩子
   ──────────────────
+  ```
+
+- 选门地图回退记录（静默写入，不播报）：
+  ```
+  [21:05:30] [G8 水城宝物库] 开门 (第2轮)   ← logmessage 回退补记
+  [21:05:45] [G8 水城宝物库] 失败 (第3轮)   ← 退出地图回退补记
   ```
 
 - 聊天框输出（若启用）：
   ```
   [巡梦金库] 成功
   [宝物库] 上级召唤
-  ❀❀下底成功❀❀
   ```
 
 - 成就进度标签页展示（每个成就带 4 色进度条及称号信息）：
@@ -108,7 +126,7 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 - 主窗口历史中按类型有颜色区分：
   - 蓝色 — 下级召唤 (wheel-low)
   - 绿色 — 中级召唤 (wheel-medium)
-  - 红色 — 上级召唤 / 开门失败 (wheel-high / gate-fail)
+  - 红色 — 上级召唤 / 开门失败 / 团灭 (wheel-high / gate-fail / duty-wiped)
   - 金色 — 召唤式变动 / 下底成功 (wheel-shift / dungeon-complete)
   - 银色 — 特殊召唤 (wheel-special)
   - 紫色 — 失败 (wheel-end)
@@ -129,12 +147,20 @@ TreasureForecast/
 │   ├── MainWindow.cs             —— 主窗口（历史记录 + 成就进度 + 导出）
 │   └── ConfigWindow.cs           —— 设置窗口
 ├── AchievementTracker.cs         —— 成就进度 Hook（ReceiveAchievementProgress）
-├── NetworkReceiver.cs            —— 底层网络 Hook 管理（双通道捕获 + 偏移量试探 + 嵌套枚举）
+├── NetworkReceiver.cs            —— 底层网络 Hook 管理（双通道捕获 + 偏移量试探 + ShowLogMessageUInt hook + 嵌套枚举 + 领地过滤）
 ├── TreasurePredictionService.cs  —— 预测逻辑核心（结果触发 + 去重）
-├── Plugin.cs                     —— Dalamud 插件生命周期与命令
+├── Plugin.cs                     —— Dalamud 插件生命周期、选门地图回退、团灭/完成事件追踪
 ├── Configuration.cs              —— 插件配置
 └── TreasureForecast.json         —— Dalamud 插件清单
 ```
+
+## 编码规范
+
+本项目遵循以下编码规范（参考 [DailyRoutines.CodeAnalysis](https://github.com/Dalamud-DailyRoutines/DailyRoutines.CodeAnalysis) 规则集）：
+
+- **禁止下划线前缀**：私有字段不使用 `_` 前缀，实例字段使用 camelCase，静态/常量字段使用 PascalCase
+- **缩写大小写一致**：英文缩写（如 ID、DTO、UI 等）在标识符中保持全大写或全小写，不混用
+- **使用 nint 代替 IntPtr**：统一使用 C# 原生类型别名 `nint` 而非 `System.IntPtr`
 
 ## 构建与安装
 

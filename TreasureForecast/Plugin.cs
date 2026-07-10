@@ -46,7 +46,15 @@ public sealed class Plugin : IDalamudPlugin
     internal AchievementTracker AchievementTracker { get; }
     internal List<AchievementProgressInfo> Achievements { get; }
 
-    private ushort _lastCompletedTerritory;
+    private ushort lastCompletedTerritory;
+    private bool wasInTreasureTerritory;
+
+    // ---- 选门开门地图状态追踪 ----
+    private bool wasInDoorSelectionMap;
+    private string? doorSelectionMapName;
+    private bool gateOpenReceived;
+    private bool gateFailReceived;
+    private bool dutyWipedOrCompleted;
 
     public Plugin()
     {
@@ -75,18 +83,19 @@ public sealed class Plugin : IDalamudPlugin
             PredictionService,
             Configuration);
         NetworkReceiver.Initialize();
+        NetworkReceiver.OnDoorGateOpenLogMessage += OnDoorGateOpenLogMessage;
 
         PredictionService.OnTreasureResult += OnTreasureResult;
 
         var titleSheet = DataManager.GameData.GetExcelSheet<Title>();
-        Achievements = Constants.AchievementIds
+        Achievements = Constants.AchievementIDs
             .Select((id, i) =>
             {
                 var titleRow = titleSheet?.GetRowOrDefault(
                     DataManager.GameData.GetExcelSheet<Achievement>()?.GetRowOrDefault(id)?.Title.RowId ?? 0);
                 return new AchievementProgressInfo
                 {
-                    AchievementId = id,
+                    AchievementID = id,
                     AchievementName = Constants.TreasureTerritories[i].Name,
                     TitleName = titleRow?.Masculine.ToString() ?? ""
                 };
@@ -94,10 +103,10 @@ public sealed class Plugin : IDalamudPlugin
 
         // 构建成就 ID → 索引 字典，O(1) 回调查找
         for (int i = 0; i < Achievements.Count; i++)
-            _achIndexById[Achievements[i].AchievementId] = i;
+            achIndexByID[Achievements[i].AchievementID] = i;
 
         // 全部成就初始时 Max==0 → 均未初始化
-        _uninitializedCount = Achievements.Count;
+        uninitializedCount = Achievements.Count;
 
         AchievementTracker = new AchievementTracker(GameInteropProvider);
         AchievementTracker.OnAchievementProgress += OnAchievementProgress;
@@ -107,6 +116,11 @@ public sealed class Plugin : IDalamudPlugin
 
         DutyState.DutyCompleted += OnDutyCompleted;
         DutyState.DutyStarted += OnDutyStarted;
+        DutyState.DutyWiped += OnDutyWiped;
+
+        // 以领地变动为触发：从挖宝地图出来后添加分割线
+        wasInTreasureTerritory = Constants.TerritoryIDSet.Contains((ushort)ClientState.TerritoryType);
+        ClientState.TerritoryChanged += OnTerritoryChanged;
 
         Log.Information($"=== {PluginInterface.Manifest.Name} 已加载 ===");
         Log.Information($"配置: Wheel={Configuration.EnableWheelPrediction}, Gate={Configuration.EnableGatePrediction}, " +
@@ -115,10 +129,14 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
+        NetworkReceiver.OnDoorGateOpenLogMessage -= OnDoorGateOpenLogMessage;
         NetworkReceiver.Dispose();
 
         DutyState.DutyCompleted -= OnDutyCompleted;
         DutyState.DutyStarted -= OnDutyStarted;
+        DutyState.DutyWiped -= OnDutyWiped;
+
+        ClientState.TerritoryChanged -= OnTerritoryChanged;
 
         AchievementTracker.OnAchievementProgress -= OnAchievementProgress;
         AchievementTracker.Dispose();
@@ -144,7 +162,14 @@ public sealed class Plugin : IDalamudPlugin
         {
             if (dto == null) return;
 
-            MainWindow.AddResult(dto);
+            // 追踪选门开门/失败状态
+            if (dto.Value == "gate-open")
+                gateOpenReceived = true;
+            else if (dto.Value == "gate-fail")
+                gateFailReceived = true;
+
+            // 去重：若 AddResult 返回 false（与上一条重复），跳过播报
+            if (!MainWindow.AddResult(dto)) return;
 
             var text = ResultFormatter.GetTreasureResultText(dto.Value);
 
@@ -169,23 +194,23 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    private int _achRetryCounter;
-    private int _nextUninitializedIdx;
-    private int _uninitializedCount;
-    private readonly Queue<int> _pendingRefresh = new();
-    private readonly Dictionary<uint, int> _achIndexById = new();
+    private int achRetryCounter;
+    private int nextUninitializedIdx;
+    private int uninitializedCount;
+    private readonly Queue<int> pendingRefresh = new();
+    private readonly Dictionary<uint, int> achIndexByID = new();
 
     private const int AchInitRetryInterval = 30;   // 未初始化时每 0.5s 快速重试
     private const int AchRefreshInterval = 300;     // 全部初始化后每 5s 批量刷新
 
     private void OnAchievementProgress(uint id, uint current, uint max)
     {
-        if (_achIndexById.TryGetValue(id, out var idx))
+        if (achIndexByID.TryGetValue(id, out var idx))
         {
             var entry = Achievements[idx];
             // 首次从 Max==0 变为 Max>0 → 未初始化计数减一
             if (entry.Max == 0 && max > 0)
-                _uninitializedCount--;
+                uninitializedCount--;
             entry.Current = current;
             entry.Max = max;
         }
@@ -194,44 +219,44 @@ public sealed class Plugin : IDalamudPlugin
     private void OnFrameworkUpdate(IFramework framework)
     {
         // Phase 1: 逐帧消费待刷新队列，避免 ProgressRequestState 锁冲突
-        if (_pendingRefresh.Count > 0)
+        if (pendingRefresh.Count > 0)
         {
-            var idx = _pendingRefresh.Dequeue();
-            AchievementTracker.Request(Achievements[idx].AchievementId);
+            var idx = pendingRefresh.Dequeue();
+            AchievementTracker.Request(Achievements[idx].AchievementID);
             return;
         }
 
-        _achRetryCounter++;
+        achRetryCounter++;
 
         // 用计数器 O(1) 判断是否全部已初始化，替代每帧线性扫描
-        var allInit = _uninitializedCount == 0;
+        var allInit = uninitializedCount == 0;
 
         if (allInit)
         {
             // Phase 2: 全部已初始化 → 每 AchRefreshInterval 帧批量排入刷新队列
-            if (_achRetryCounter >= AchRefreshInterval)
+            if (achRetryCounter >= AchRefreshInterval)
             {
-                _achRetryCounter = 0;
+                achRetryCounter = 0;
                 for (int i = 0; i < Achievements.Count; i++)
-                    _pendingRefresh.Enqueue(i);
+                    pendingRefresh.Enqueue(i);
                 // 本帧立即消费一个
-                var idx = _pendingRefresh.Dequeue();
-                AchievementTracker.Request(Achievements[idx].AchievementId);
+                var idx = pendingRefresh.Dequeue();
+                AchievementTracker.Request(Achievements[idx].AchievementID);
             }
         }
         else
         {
             // Phase 3: 存在未初始化成就 → 每 AchInitRetryInterval 帧快速重试（轮询扫描）
-            if (_achRetryCounter >= AchInitRetryInterval)
+            if (achRetryCounter >= AchInitRetryInterval)
             {
-                _achRetryCounter = 0;
+                achRetryCounter = 0;
                 for (int i = 0; i < Achievements.Count; i++)
                 {
-                    int idx = (_nextUninitializedIdx + i) % Achievements.Count;
+                    int idx = (nextUninitializedIdx + i) % Achievements.Count;
                     if (Achievements[idx].Max == 0)
                     {
-                        AchievementTracker.Request(Achievements[idx].AchievementId);
-                        _nextUninitializedIdx = (idx + 1) % Achievements.Count;
+                        AchievementTracker.Request(Achievements[idx].AchievementID);
+                        nextUninitializedIdx = (idx + 1) % Achievements.Count;
                         return;
                     }
                 }
@@ -259,23 +284,139 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnDutyStarted(IDutyStateEventArgs args)
     {
-        _lastCompletedTerritory = 0;
+        lastCompletedTerritory = 0;
+        ResetDoorSelectionState();
         PredictionService.ClearCurrentMapName();
     }
 
     private void OnDutyCompleted(IDutyStateEventArgs args)
     {
-        var territoryId = (ushort)args.TerritoryType.RowId;
-        if (!Constants.TerritoryIdSet.Contains(territoryId)) return;
-        if (territoryId == _lastCompletedTerritory) return;
-        _lastCompletedTerritory = territoryId;
+        dutyWipedOrCompleted = true;
+
+        var territoryID = (ushort)args.TerritoryType.RowId;
+        if (!Constants.TerritoryIDSet.Contains(territoryID)) return;
+        if (territoryID == lastCompletedTerritory) return;
+        lastCompletedTerritory = territoryID;
 
         if (Configuration.ShowDungeonCompleteMessage)
-        {
-            Chat.Print("❀❀下底成功❀❀");
-            MainWindow.AddDutyCompleteSeparator();
-        }
+            MainWindow.AddDutyEventEntry("dungeon-complete");
         PredictionService.ClearCurrentMapName();
+    }
+
+    /// <summary>
+    /// 领地变动时检测：
+    /// 1. 从选门地图退出且无失败网络包/团灭/完成 → 补记失败记录
+    /// 2. 从挖宝地图出来 → 添加历史分割线
+    /// </summary>
+    private void OnTerritoryChanged(uint territoryID)
+    {
+        var isTreasure = Constants.TerritoryIDSet.Contains((ushort)territoryID);
+        var isDoorSelection = Constants.DoorSelectionTerritoryIds.Contains((ushort)territoryID);
+
+        // 从选门地图退出：检查是否需要补记失败记录
+        if (wasInDoorSelectionMap && !isDoorSelection)
+            TryFallbackFailRecord();
+
+        // 从挖宝地图出来（宝藏领地 → 非宝藏领地）时添加分割线
+        if (wasInTreasureTerritory && !isTreasure)
+            MainWindow.AddSeparator();
+
+        // 更新选门地图状态
+        if (isDoorSelection)
+        {
+            wasInDoorSelectionMap = true;
+            doorSelectionMapName = GetTerritoryName((ushort)territoryID);
+            ResetDoorSelectionState();
+        }
+        else
+        {
+            wasInDoorSelectionMap = false;
+            doorSelectionMapName = null;
+        }
+
+        wasInTreasureTerritory = isTreasure;
+    }
+
+    /// <summary>
+    /// 团灭事件：标记当前会话已发生团灭（退出地图时不再补记失败），
+    /// 若在挖宝地图中则写入历史记录。
+    /// </summary>
+    private void OnDutyWiped(IDutyStateEventArgs args)
+    {
+        dutyWipedOrCompleted = true;
+
+        var territoryID = (ushort)args.TerritoryType.RowId;
+        if (!Constants.TerritoryIDSet.Contains(territoryID)) return;
+
+        if (Configuration.ShowDungeonCompleteMessage)
+            MainWindow.AddDutyEventEntry("duty-wiped");
+    }
+
+    /// <summary>
+    /// 选门地图 logmessage 回退：当 ShowLogMessageUInt 拦截到"打开了通往第{n}区的大门"时，
+    /// 静默新增一条开门历史记录（不播报，去重对比上一条）。
+    /// round 参数即轮数，由 NetworkReceiver 从 ShowLogMessageUInt 的 value 参数直接获得。
+    /// </summary>
+    private void OnDoorGateOpenLogMessage(int round)
+    {
+        try
+        {
+            var mapName = GetTerritoryName((ushort)ClientState.TerritoryType);
+
+            var added = MainWindow.AddResult(new TreasureResultDTO
+            {
+                Value = "gate-open",
+                Source = mapName,
+                Round = round,
+                Timestamp = DateTime.Now
+            });
+            if (added)
+            {
+                gateOpenReceived = true;
+                Log.Information($"[选门回退] logmessage 开门记录已添加: {mapName} 第{round}轮");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "处理选门 logmessage 回退时出错");
+        }
+    }
+
+    /// <summary>
+    /// 获取领地名称，未知领地返回 null。
+    /// </summary>
+    private static string? GetTerritoryName(ushort territoryID) =>
+        Constants.TerritoryNameByID.TryGetValue(territoryID, out var name) ? name : null;
+
+    /// <summary>
+    /// 重置选门地图状态（开门/失败标志 + 团灭/完成标志）。
+    /// </summary>
+    private void ResetDoorSelectionState()
+    {
+        gateOpenReceived = false;
+        gateFailReceived = false;
+        dutyWipedOrCompleted = false;
+    }
+
+    /// <summary>
+    /// 退出选门地图时的失败补记：仅在确实收到过开门记录、
+    /// 且无失败网络包且未团灭/完成时，补记一条 gate-fail。
+    /// </summary>
+    private void TryFallbackFailRecord()
+    {
+        if (!gateOpenReceived || gateFailReceived || dutyWipedOrCompleted) return;
+
+        var lastRound = MainWindow.GetLastNonSeparatorRound();
+        var failRound = lastRound + 1;
+        var added = MainWindow.AddResult(new TreasureResultDTO
+        {
+            Value = "gate-fail",
+            Source = doorSelectionMapName,
+            Round = failRound,
+            Timestamp = DateTime.Now
+        });
+        if (added)
+            Log.Information($"[选门回退] 退出地图补记失败: {doorSelectionMapName} 第{failRound}轮 (上一条轮数={lastRound})");
     }
 
     private void OnCommand(string command, string args)

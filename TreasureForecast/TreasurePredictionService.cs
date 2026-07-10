@@ -7,19 +7,19 @@ namespace TreasureForecast;
 
 public class TreasurePredictionService
 {
-    private string? _currentMapName;
+    private string? currentMapName;
 
-    public bool HasCurrentMapName => _currentMapName != null;
+    public bool HasCurrentMapName => currentMapName != null;
 
-    public void SetCurrentMapName(string name) => _currentMapName = name;
-    public void ClearCurrentMapName() => _currentMapName = null;
+    public void SetCurrentMapName(string name) => currentMapName = name;
+    public void ClearCurrentMapName() => currentMapName = null;
 
     public event Action<TreasureResultDTO>? OnTreasureResult;
 
     private const long DedupWindowMs = 5000;
-    private readonly Dictionary<string, long> _recentResultTimestamps = new();
-    private readonly object _dedupLock = new();
-    private int _dedupCleanupCounter;
+    private readonly Dictionary<string, long> recentResultTimestamps = new();
+    private readonly object dedupLock = new();
+    private int dedupCleanupCounter;
     private const int DedupCleanupInterval = 64;
 
     /// <summary>
@@ -30,30 +30,30 @@ public class TreasurePredictionService
         var key = $"{value}|{source ?? ""}|{round}";
         var now = Environment.TickCount64;
 
-        lock (_dedupLock)
+        lock (dedupLock)
         {
-            if (_recentResultTimestamps.TryGetValue(key, out var lastTime) && now - lastTime < DedupWindowMs)
+            if (recentResultTimestamps.TryGetValue(key, out var lastTime) && now - lastTime < DedupWindowMs)
                 return;
 
-            _recentResultTimestamps[key] = now;
+            recentResultTimestamps[key] = now;
 
-            if (++_dedupCleanupCounter >= DedupCleanupInterval)
+            if (++dedupCleanupCounter >= DedupCleanupInterval)
             {
-                _dedupCleanupCounter = 0;
+                dedupCleanupCounter = 0;
                 var threshold = now - DedupWindowMs;
-                var expired = _recentResultTimestamps
+                var expired = recentResultTimestamps
                     .Where(kvp => kvp.Value < threshold)
                     .Select(kvp => kvp.Key)
                     .ToList();
                 foreach (var k in expired)
-                    _recentResultTimestamps.Remove(k);
+                    recentResultTimestamps.Remove(k);
             }
         }
 
-        var actualSource = _currentMapName ?? source;
+        var actualSource = currentMapName ?? source;
 
         if (value == "wheel-end" || value == "dungeon-complete")
-            _currentMapName = null;
+            currentMapName = null;
 
         OnTreasureResult?.Invoke(new TreasureResultDTO
         {

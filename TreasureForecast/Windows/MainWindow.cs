@@ -15,8 +15,7 @@ namespace TreasureForecast.Windows;
 
 public class MainWindow : Window, IDisposable
 {
-    private readonly Plugin _plugin;
-    private bool _isInsideTreasureDungeon;
+    private readonly Plugin plugin;
 
     // 样式常量
     private static readonly Vector4 PixelWindowBg = new(0.06f, 0.06f, 0.08f, 0.96f);
@@ -50,19 +49,20 @@ public class MainWindow : Window, IDisposable
         public string Value { get; init; } = "";
         public string DisplayText { get; init; } = "";
         public Vector4 Color { get; init; }
+        public int Round { get; init; }
     }
 
-    private readonly List<HistoryEntry> _results = new();
-    private int _nonSeparatorCount;
+    private readonly List<HistoryEntry> results = new();
+    private int nonSeparatorCount;
 
     // 成就进度过滤缓存
-    private bool _cachedTrackingEnabled;
-    private readonly bool[] _cachedTracked = new bool[10];
-    private List<AchievementProgressInfo> _cachedAchDisplay = new();
-    private bool _achFilterValid;
+    private bool cachedTrackingEnabled;
+    private readonly bool[] cachedTracked = new bool[10];
+    private List<AchievementProgressInfo> cachedAchDisplay = new();
+    private bool achFilterValid;
 
-    private int _currentTab;
-    private readonly StringBuilder _sb = new();
+    private int currentTab;
+    private readonly StringBuilder sb = new();
 
     private static readonly string[] TabLabels = { "历史", "成就" };
 
@@ -80,7 +80,7 @@ public class MainWindow : Window, IDisposable
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue)
         };
 
-        _plugin = plugin;
+        this.plugin = plugin;
 
         TitleBarButtons.Add(new()
         {
@@ -123,12 +123,7 @@ public class MainWindow : Window, IDisposable
 
     private static HistoryEntry CreateEntry(TreasureResultDTO dto)
     {
-        if (dto.Value == "separator")
-            return new HistoryEntry { Value = "separator" };
-
-        var text = dto.Value == "dungeon-complete"
-            ? "❀❀下底成功❀❀"
-            : ResultFormatter.GetTreasureResultText(dto.Value);
+        var text = ResultFormatter.GetTreasureResultText(dto.Value);
         var roundInfo = dto.Round > 0 ? $" (第{dto.Round}轮)" : "";
         var time = dto.Timestamp.ToString("HH:mm:ss");
         var sourcePrefix = string.IsNullOrEmpty(dto.Source) ? "" : $"[{dto.Source}] ";
@@ -137,7 +132,8 @@ public class MainWindow : Window, IDisposable
         {
             Value = dto.Value,
             DisplayText = $"[{time}] {sourcePrefix}{text}{roundInfo}",
-            Color = GetHistoryColor(dto.Value)
+            Color = GetHistoryColor(dto.Value),
+            Round = dto.Round
         };
     }
 
@@ -153,43 +149,77 @@ public class MainWindow : Window, IDisposable
         "gate-open"         => ColorGateOpen,
         "gate-fail"         => ColorRed,
         "dungeon-complete"  => ColorGold,
+        "duty-wiped"        => ColorRed,
         _                   => ColorDefault
     };
 
-    public void AddDutyCompleteSeparator()
+    /// <summary>
+    /// 添加历史分割线。仅在已有非分割线条目且最后一条不是分割线时添加。
+    /// </summary>
+    public void AddSeparator()
     {
-        _isInsideTreasureDungeon = false;
-        _results.Add(CreateEntry(new TreasureResultDTO { Value = "dungeon-complete", Timestamp = DateTime.Now }));
-        _results.Add(new HistoryEntry { Value = "separator" });
-        _nonSeparatorCount++;
+        if (nonSeparatorCount == 0) return;
+        if (results.Count > 0 && results[^1].Value == "separator") return;
+        results.Add(new HistoryEntry { Value = "separator" });
     }
 
-    public void AddResult(TreasureResultDTO dto)
+    /// <summary>
+    /// 添加副本事件条目（下底成功/团灭）到历史记录。
+    /// </summary>
+    public void AddDutyEventEntry(string value)
     {
-        if (dto.Value.StartsWith("wheel-") && dto.Value != "wheel-end" && !_isInsideTreasureDungeon)
+        results.Add(CreateEntry(new TreasureResultDTO { Value = value, Timestamp = DateTime.Now }));
+        nonSeparatorCount++;
+    }
+
+    /// <summary>
+    /// 添加挖宝结果到历史记录。对开门/关门结果进行去重（对比上一条非分割线记录）。
+    /// 返回 false 表示因重复被跳过。
+    /// </summary>
+    public bool AddResult(TreasureResultDTO dto)
+    {
+        // 去重：仅对开门/关门结果检查上一条是否重复
+        if (dto.Value is "gate-open" or "gate-fail")
         {
-            _isInsideTreasureDungeon = true;
-            if (!(_results.Count > 0 && _results[^1].Value == "separator"))
-                _results.Add(new HistoryEntry { Value = "separator" });
+            for (int i = results.Count - 1; i >= 0; i--)
+            {
+                var entry = results[i];
+                if (entry.Value == "separator") continue;
+                if (entry.Value == dto.Value && entry.Round == dto.Round)
+                    return false;
+                break;
+            }
         }
 
-        _results.Add(CreateEntry(dto));
-        _nonSeparatorCount++;
+        results.Add(CreateEntry(dto));
+        nonSeparatorCount++;
 
-        if (dto.Value == "wheel-end")
-            _isInsideTreasureDungeon = false;
-
-        var maxHistory = _plugin.Configuration.MaxHistoryCount;
-        while (_nonSeparatorCount > maxHistory)
+        var maxHistory = plugin.Configuration.MaxHistoryCount;
+        while (nonSeparatorCount > maxHistory)
         {
-            var idx = _results.FindIndex(r => r.Value != "separator");
+            var idx = results.FindIndex(r => r.Value != "separator");
             if (idx >= 0)
             {
-                _results.RemoveAt(idx);
-                _nonSeparatorCount--;
+                results.RemoveAt(idx);
+                nonSeparatorCount--;
             }
             else break;
         }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 获取最后一条非分割线记录的轮数。无记录时返回 0。
+    /// </summary>
+    public int GetLastNonSeparatorRound()
+    {
+        for (int i = results.Count - 1; i >= 0; i--)
+        {
+            if (results[i].Value != "separator")
+                return results[i].Round;
+        }
+        return 0;
     }
 
     public override void Draw()
@@ -199,7 +229,7 @@ public class MainWindow : Window, IDisposable
         DrawPixelTabs();
         ImGuiHelpers.ScaledDummy(2);
 
-        switch (_currentTab)
+        switch (currentTab)
         {
             case 0: DrawHistory(); break;
             case 1: DrawAchievementProgress(); break;
@@ -211,7 +241,7 @@ public class MainWindow : Window, IDisposable
         for (int i = 0; i < TabLabels.Length; i++)
         {
             if (i > 0) ImGui.SameLine();
-            var active = i == _currentTab;
+            var active = i == currentTab;
 
             ImGui.PushStyleColor(ImGuiCol.Button,        active ? PixelTabActive : new Vector4(0, 0, 0, 0));
             ImGui.PushStyleColor(ImGuiCol.ButtonHovered, active ? PixelTabActive : PixelTabHover);
@@ -219,7 +249,7 @@ public class MainWindow : Window, IDisposable
             ImGui.PushStyleColor(ImGuiCol.Text,          active ? PixelAccent    : PixelDim);
 
             if (ImGui.SmallButton($" {TabLabels[i]} ##pixelTab{i}"))
-                _currentTab = i;
+                currentTab = i;
 
             ImGui.PopStyleColor(4);
         }
@@ -232,9 +262,9 @@ public class MainWindow : Window, IDisposable
         if (charWidth <= 0) return;
         var count = Math.Max(1, (int)(avail / charWidth));
 
-        _sb.Clear();
-        _sb.Append('─', count);
-        ImGui.TextColored(PixelDim, _sb.ToString());
+        sb.Clear();
+        sb.Append('─', count);
+        ImGui.TextColored(PixelDim, sb.ToString());
     }
 
     private void DrawPixelProgress(float ratio, uint current, uint max, string titleName, bool isComplete)
@@ -244,19 +274,19 @@ public class MainWindow : Window, IDisposable
 
         var barColor = ImGui.ColorConvertU32ToFloat4(GetProgressColor(ratio));
 
-        _sb.Clear();
-        _sb.Append('[');
-        _sb.Append('█', filled);
-        _sb.Append('░', barWidth - filled);
-        _sb.Append("] ");
-        _sb.Append(current);
-        _sb.Append(" / ");
-        _sb.Append(max);
-        _sb.Append(" (");
-        _sb.Append((int)(ratio * 100));
-        _sb.Append("%)");
+        sb.Clear();
+        sb.Append('[');
+        sb.Append('█', filled);
+        sb.Append('░', barWidth - filled);
+        sb.Append("] ");
+        sb.Append(current);
+        sb.Append(" / ");
+        sb.Append(max);
+        sb.Append(" (");
+        sb.Append((int)(ratio * 100));
+        sb.Append("%)");
 
-        ImGui.TextColored(barColor, _sb.ToString());
+        ImGui.TextColored(barColor, sb.ToString());
 
         if (titleName.Length > 0)
         {
@@ -284,18 +314,17 @@ public class MainWindow : Window, IDisposable
             ImGui.SameLine();
             if (ImGui.SmallButton("清空"))
             {
-                _results.Clear();
-                _nonSeparatorCount = 0;
-                _isInsideTreasureDungeon = false;
+                results.Clear();
+                nonSeparatorCount = 0;
             }
         });
 
         using var child = ImRaii.Child("##historyList", Vector2.Zero, true);
         if (!child.Success) return;
 
-        for (int i = _results.Count - 1; i >= 0; i--)
+        for (int i = results.Count - 1; i >= 0; i--)
         {
-            var entry = _results[i];
+            var entry = results[i];
 
             if (entry.Value == "separator")
             {
@@ -305,7 +334,7 @@ public class MainWindow : Window, IDisposable
                 continue;
             }
 
-            if (entry.Value == "dungeon-complete")
+            if (entry.Value is "dungeon-complete" or "duty-wiped")
             {
                 ImGui.TextColored(entry.Color, $"  {entry.DisplayText}");
                 continue;
@@ -319,16 +348,16 @@ public class MainWindow : Window, IDisposable
 
     private void ExportHistory()
     {
-        if (_results.Count == 0)
+        if (results.Count == 0)
         {
             Plugin.Chat.PrintError("没有可导出的历史记录");
             return;
         }
 
         var sb = new StringBuilder();
-        for (int i = 0; i < _results.Count; i++)
+        for (int i = 0; i < results.Count; i++)
         {
-            var entry = _results[i];
+            var entry = results[i];
             if (sb.Length > 0) sb.Append('\n');
             sb.Append(entry.Value == "separator" ? "====================" : entry.DisplayText);
         }
@@ -339,19 +368,19 @@ public class MainWindow : Window, IDisposable
 
     private void DrawAchievementProgress()
     {
-        var achList = _plugin.Achievements;
+        var achList = plugin.Achievements;
         if (achList == null || achList.Count == 0)
         {
             ImGui.TextColored(ColorGray, "成就数据未就绪");
             return;
         }
 
-        var cfg = _plugin.Configuration;
+        var cfg = plugin.Configuration;
 
-        if (!_achFilterValid || HasFilterChanged(cfg))
+        if (!achFilterValid || HasFilterChanged(cfg))
             UpdateAchDisplayCache(cfg, achList);
 
-        if (_cachedAchDisplay.Count == 0)
+        if (cachedAchDisplay.Count == 0)
         {
             ImGui.TextColored(ColorGray, "请在设置中选择要追踪的成就");
             return;
@@ -360,7 +389,7 @@ public class MainWindow : Window, IDisposable
         DrawSectionHeader("▌ 成就进度", () =>
         {
             if (ImGui.SmallButton("导出"))
-                _plugin.ExportAchievementProgress();
+                plugin.ExportAchievementProgress();
         });
 
         using var child = ImRaii.Child("##achievementList", Vector2.Zero, true);
@@ -368,7 +397,7 @@ public class MainWindow : Window, IDisposable
 
         var first = true;
 
-        foreach (var ach in _cachedAchDisplay)
+        foreach (var ach in cachedAchDisplay)
         {
             if (!first)
             {
@@ -396,28 +425,28 @@ public class MainWindow : Window, IDisposable
 
     private bool HasFilterChanged(Configuration cfg)
     {
-        if (_cachedTrackingEnabled != cfg.EnableAchievementTracking) return true;
+        if (cachedTrackingEnabled != cfg.EnableAchievementTracking) return true;
         if (!cfg.EnableAchievementTracking) return false;
 
         var tracked = cfg.TrackedAchievements;
-        for (int i = 0; i < tracked.Length && i < _cachedTracked.Length; i++)
+        for (int i = 0; i < tracked.Length && i < cachedTracked.Length; i++)
         {
-            if (_cachedTracked[i] != tracked[i]) return true;
+            if (cachedTracked[i] != tracked[i]) return true;
         }
         return false;
     }
 
     private void UpdateAchDisplayCache(Configuration cfg, List<AchievementProgressInfo> achList)
     {
-        _cachedTrackingEnabled = cfg.EnableAchievementTracking;
+        cachedTrackingEnabled = cfg.EnableAchievementTracking;
         var tracked = cfg.TrackedAchievements;
-        for (int i = 0; i < tracked.Length && i < _cachedTracked.Length; i++)
-            _cachedTracked[i] = tracked[i];
+        for (int i = 0; i < tracked.Length && i < cachedTracked.Length; i++)
+            cachedTracked[i] = tracked[i];
 
-        _cachedAchDisplay = cfg.EnableAchievementTracking
+        cachedAchDisplay = cfg.EnableAchievementTracking
             ? achList.Where((a, i) => i < tracked.Length && tracked[i]).ToList()
             : achList.ToList();
-        _achFilterValid = true;
+        achFilterValid = true;
     }
 
     private static uint GetProgressColor(float progress) => progress switch

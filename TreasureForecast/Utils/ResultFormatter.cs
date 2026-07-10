@@ -12,7 +12,9 @@ public static class ResultFormatter
         "wheel-end"     => "失败",
         "wheel-open"    => "成功",
         "gate-open"     => "开门",
-        "gate-fail"     => "失败",
-        _               => ""
+        "gate-fail"         => "失败",
+        "dungeon-complete"  => "❀❀下底成功❀❀",
+        "duty-wiped"        => "挖宝也能团灭？回家吧，孩子",
+        _                   => ""
     };
 }

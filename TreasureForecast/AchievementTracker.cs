@@ -9,19 +9,19 @@ public unsafe class AchievementTracker : IDisposable
 {
     public event Action<uint, uint, uint>? OnAchievementProgress;
 
-    private readonly Hook<Achievement.Delegates.ReceiveAchievementProgress> _hook;
+    private readonly Hook<Achievement.Delegates.ReceiveAchievementProgress> hook;
 
-    public AchievementTracker(IGameInteropProvider hook)
+    public AchievementTracker(IGameInteropProvider gameInterop)
     {
-        _hook = hook.HookFromAddress<Achievement.Delegates.ReceiveAchievementProgress>(
+        this.hook = gameInterop.HookFromAddress<Achievement.Delegates.ReceiveAchievementProgress>(
             Achievement.Addresses.ReceiveAchievementProgress.Value,
             ReceiveAchievementDetour);
-        _hook.Enable();
+        this.hook.Enable();
     }
 
     public void Dispose()
     {
-        _hook.Dispose();
+        hook.Dispose();
     }
 
     public void Request(uint id)
@@ -35,6 +35,6 @@ public unsafe class AchievementTracker : IDisposable
     private void ReceiveAchievementDetour(Achievement* self, uint id, uint current, uint max)
     {
         OnAchievementProgress?.Invoke(id, current, max);
-        _hook.Original(self, id, current, max);
+        hook.Original(self, id, current, max);
     }
 }

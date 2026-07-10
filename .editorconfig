@@ -80,6 +80,29 @@ csharp_space_between_method_declaration_parameter_list_parentheses = false
 csharp_space_between_parentheses = none
 csharp_space_between_square_brackets = false
 
+# ---- 代码规则 (DailyRoutines.CodeAnalysis) ----
+
+# 规则1: 禁止下划线前缀
+# 私有实例字段使用 camelCase, 私有静态/常量字段使用 PascalCase, 均不允许下划线前缀。
+# 上方 private_instance_fields_rule / private_static_fields_rule / private_constants_rule
+# / private_static_readonly_rule 已通过命名样式隐式强制。
+# 以下规则显式标记下划线前缀的私有字段为 error:
+dotnet_naming_rule.no_underscore_prefix_rule.severity = error
+dotnet_naming_rule.no_underscore_prefix_rule.symbols = no_underscore_prefix_symbols
+dotnet_naming_rule.no_underscore_prefix_rule.style = no_underscore_prefix_style
+dotnet_naming_symbols.no_underscore_prefix_symbols.applicable_accessibilities = private,protected,internal,protected_internal,private_protected
+dotnet_naming_symbols.no_underscore_prefix_symbols.applicable_kinds = field,property,method,parameter,class,interface
+dotnet_naming_style.no_underscore_prefix_style.capitalization = camel_case
+
+# 规则2: 缩写大小写一致
+# 英文缩写(ID/DTO/UI/NPC/API 等)在标识符中保持全大写或全小写, 不混用。
+# editorconfig 无原生缩写大小写检查, 需 DailyRoutines.CodeAnalysis AcronymCasingConsistency 分析器。
+
+# 规则3: 使用 nint 代替 IntPtr
+# 统一使用 C# 原生类型别名 nint 而非 System.IntPtr。
+# dotnet_style_predefined_type_for_member_access 已在上方设置为 true:suggestion。
+dotnet_style_predefined_type_for_parameters = true:suggestion
+
 # ReSharper properties
 resharper_align_linq_query = true
 resharper_align_multiline_argument = true
