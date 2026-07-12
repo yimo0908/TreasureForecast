@@ -5,6 +5,7 @@ namespace TreasureForecast.Models;
 public class AchievementProgressInfo
 {
     public uint AchievementID { get; init; }
+    public uint TitleID { get; init; }
     public string AchievementName { get; set; } = "";
     public string TitleName { get; set; } = "";
 

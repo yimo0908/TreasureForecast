@@ -88,14 +88,16 @@ public sealed class Plugin : IDalamudPlugin
         PredictionService.OnTreasureResult += OnTreasureResult;
 
         var titleSheet = DataManager.GameData.GetExcelSheet<Title>();
+        var achievementSheet = DataManager.GameData.GetExcelSheet<Achievement>();
         Achievements = Constants.AchievementIDs
             .Select((id, i) =>
             {
-                var titleRow = titleSheet?.GetRowOrDefault(
-                    DataManager.GameData.GetExcelSheet<Achievement>()?.GetRowOrDefault(id)?.Title.RowId ?? 0);
+                var titleRowId = achievementSheet?.GetRowOrDefault(id)?.Title.RowId ?? 0;
+                var titleRow = titleSheet?.GetRowOrDefault(titleRowId);
                 return new AchievementProgressInfo
                 {
                     AchievementID = id,
+                    TitleID = titleRowId,
                     AchievementName = Constants.TreasureTerritories[i].Name,
                     TitleName = titleRow?.Masculine.ToString() ?? ""
                 };
@@ -280,6 +282,33 @@ public sealed class Plugin : IDalamudPlugin
         var text = string.Join("\n", lines);
         ImGui.SetClipboardText(text);
         Chat.Print("成就进度导出成功");
+    }
+
+    /// <summary>
+    /// 设置玩家称号：称号列表已加载时检查是否解锁，未加载时直接发送请求（由服务端校验）。
+    /// </summary>
+    public unsafe void SetTitle(uint titleId, string titleName)
+    {
+        if (titleId == 0) return;
+
+        var ui = FFXIVClientStructs.FFXIV.Client.Game.UI.UIState.Instance();
+        if (ui == null || !ui->PlayerState.IsLoaded) return;
+
+        if (ui->TitleList.DataReceived)
+        {
+            if (!ui->TitleList.IsTitleUnlocked((ushort)titleId))
+            {
+                Chat.PrintError("该称号尚未解锁");
+                return;
+            }
+        }
+        else
+        {
+            ui->TitleList.RequestTitleList();
+        }
+
+        ui->TitleController.SendTitleIdUpdate((ushort)titleId);
+        Chat.Print($"称号已设置: {titleName}");
     }
 
     private void OnDutyStarted(IDutyStateEventArgs args)

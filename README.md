@@ -145,7 +145,8 @@ TreasureForecast/
 │   └── ResultFormatter.cs        —— 结果格式化（中文描述映射）
 ├── Windows/
 │   ├── MainWindow.cs             —— 主窗口（历史记录 + 成就进度 + 导出）
-│   └── ConfigWindow.cs           —— 设置窗口
+│   ├── ConfigWindow.cs           —— 设置窗口
+│   └── Style.cs                  —— 窗口样式常量（颜色 / 进度条配色 / Push-Pop 计数）
 ├── AchievementTracker.cs         —— 成就进度 Hook（ReceiveAchievementProgress）
 ├── NetworkReceiver.cs            —— 底层网络 Hook 管理（双通道捕获 + 偏移量试探 + ShowLogMessageUInt hook + 嵌套枚举 + 领地过滤）
 ├── TreasurePredictionService.cs  —— 预测逻辑核心（结果触发 + 去重）

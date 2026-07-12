@@ -17,32 +17,6 @@ public class MainWindow : Window, IDisposable
 {
     private readonly Plugin plugin;
 
-    // 样式常量
-    private static readonly Vector4 PixelWindowBg = new(0.06f, 0.06f, 0.08f, 0.96f);
-    private static readonly Vector4 PixelChildBg   = new(0.03f, 0.03f, 0.05f, 1f);
-    private static readonly Vector4 PixelBorder    = new(0.22f, 0.22f, 0.28f, 0.5f);
-    private static readonly Vector4 PixelDim       = new(0.35f, 0.35f, 0.4f, 1f);
-    private static readonly Vector4 PixelAccent    = new(0.4f, 0.85f, 1.0f, 1f);
-    private static readonly Vector4 PixelTabActive = new(0.12f, 0.12f, 0.16f, 1f);
-    private static readonly Vector4 PixelTabHover  = new(0.08f, 0.08f, 0.12f, 1f);
-    private static readonly Vector4 PixelButtonBg  = new(0.1f, 0.1f, 0.14f, 1f);
-
-    // 历史结果颜色
-    private static readonly Vector4 ColorWheelLow     = new(0.5f,  0.6f,  1.0f, 1);
-    private static readonly Vector4 ColorWheelMedium  = new(0.3f,  0.9f,  0.5f, 1);
-    private static readonly Vector4 ColorRed          = new(1.0f,  0.4f,  0.4f, 1);
-    private static readonly Vector4 ColorGold         = new(1.0f,  0.78f, 0.25f, 1);
-    private static readonly Vector4 ColorWheelSpecial = new(0.72f, 0.72f, 0.78f, 1);
-    private static readonly Vector4 ColorWheelEnd     = new(0.78f, 0.45f, 1.0f, 1);
-    private static readonly Vector4 ColorGateOpen     = new(0.3f,  0.9f,  0.35f, 1);
-    private static readonly Vector4 ColorDefault      = new(0.85f, 0.85f, 0.85f, 1);
-    private static readonly Vector4 ColorGray         = new(0.45f, 0.45f, 0.5f, 1);
-    private static readonly Vector4 ColorTitleComplete   = new(0.2f,  0.9f,  0.25f, 1);
-    private static readonly Vector4 ColorTitleIncomplete = new(0.45f, 0.45f, 0.5f, 1);
-
-    private const int PushedColorCount = 10;
-    private const int PushedVarCount = 8;
-
     private readonly struct HistoryEntry
     {
         public HistoryEntry() { }
@@ -65,11 +39,6 @@ public class MainWindow : Window, IDisposable
     private readonly StringBuilder sb = new();
 
     private static readonly string[] TabLabels = { "历史", "成就" };
-
-    private static readonly uint ProgressColorComplete = ImGui.GetColorU32(new Vector4(0.2f,  0.9f,  0.25f, 1f));
-    private static readonly uint ProgressColorHigh     = ImGui.GetColorU32(new Vector4(0.3f,  0.7f,  1f,   1f));
-    private static readonly uint ProgressColorMid      = ImGui.GetColorU32(new Vector4(1f,   0.78f, 0.25f, 1f));
-    private static readonly uint ProgressColorLow      = ImGui.GetColorU32(new Vector4(1f,   0.35f, 0.35f, 1f));
 
     public MainWindow(Plugin plugin)
         : base("挖宝预测##TreasureForecastMain", ImGuiWindowFlags.NoScrollbar)
@@ -94,16 +63,16 @@ public class MainWindow : Window, IDisposable
 
     public override void PreDraw()
     {
-        ImGui.PushStyleColor(ImGuiCol.WindowBg,       PixelWindowBg);
-        ImGui.PushStyleColor(ImGuiCol.ChildBg,        PixelChildBg);
-        ImGui.PushStyleColor(ImGuiCol.Border,         PixelBorder);
-        ImGui.PushStyleColor(ImGuiCol.Separator,      PixelDim);
-        ImGui.PushStyleColor(ImGuiCol.FrameBg,        PixelChildBg);
-        ImGui.PushStyleColor(ImGuiCol.Button,         PixelButtonBg);
-        ImGui.PushStyleColor(ImGuiCol.ButtonHovered,  PixelTabHover);
-        ImGui.PushStyleColor(ImGuiCol.ButtonActive,   PixelTabActive);
-        ImGui.PushStyleColor(ImGuiCol.Text,           ColorDefault);
-        ImGui.PushStyleColor(ImGuiCol.PlotHistogram,  PixelAccent);
+        ImGui.PushStyleColor(ImGuiCol.WindowBg,       Style.PixelWindowBg);
+        ImGui.PushStyleColor(ImGuiCol.ChildBg,        Style.PixelChildBg);
+        ImGui.PushStyleColor(ImGuiCol.Border,         Style.PixelBorder);
+        ImGui.PushStyleColor(ImGuiCol.Separator,      Style.PixelDim);
+        ImGui.PushStyleColor(ImGuiCol.FrameBg,        Style.PixelChildBg);
+        ImGui.PushStyleColor(ImGuiCol.Button,         Style.PixelButtonBg);
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered,  Style.PixelTabHover);
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive,   Style.PixelTabActive);
+        ImGui.PushStyleColor(ImGuiCol.Text,           Style.ColorDefault);
+        ImGui.PushStyleColor(ImGuiCol.PlotHistogram,  Style.PixelAccent);
 
         ImGui.PushStyleVar(ImGuiStyleVar.WindowRounding,    0f);
         ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding,     0f);
@@ -117,8 +86,8 @@ public class MainWindow : Window, IDisposable
 
     public override void PostDraw()
     {
-        ImGui.PopStyleVar(PushedVarCount);
-        ImGui.PopStyleColor(PushedColorCount);
+        ImGui.PopStyleVar(Style.PushedVarCount);
+        ImGui.PopStyleColor(Style.PushedColorCount);
     }
 
     private static HistoryEntry CreateEntry(TreasureResultDTO dto)
@@ -139,18 +108,18 @@ public class MainWindow : Window, IDisposable
 
     private static Vector4 GetHistoryColor(string value) => value switch
     {
-        "wheel-low"         => ColorWheelLow,
-        "wheel-medium"      => ColorWheelMedium,
-        "wheel-high"        => ColorRed,
-        "wheel-shift"       => ColorGold,
-        "wheel-special"     => ColorWheelSpecial,
-        "wheel-end"         => ColorWheelEnd,
-        "wheel-open"        => ColorGateOpen,
-        "gate-open"         => ColorGateOpen,
-        "gate-fail"         => ColorRed,
-        "dungeon-complete"  => ColorGold,
-        "duty-wiped"        => ColorRed,
-        _                   => ColorDefault
+        "wheel-low"         => Style.ColorWheelLow,
+        "wheel-medium"      => Style.ColorWheelMedium,
+        "wheel-high"        => Style.ColorRed,
+        "wheel-shift"       => Style.ColorGold,
+        "wheel-special"     => Style.ColorWheelSpecial,
+        "wheel-end"         => Style.ColorWheelEnd,
+        "wheel-open"        => Style.ColorGateOpen,
+        "gate-open"         => Style.ColorGateOpen,
+        "gate-fail"         => Style.ColorRed,
+        "dungeon-complete"  => Style.ColorGold,
+        "duty-wiped"        => Style.ColorRed,
+        _                   => Style.ColorDefault
     };
 
     /// <summary>
@@ -243,10 +212,10 @@ public class MainWindow : Window, IDisposable
             if (i > 0) ImGui.SameLine();
             var active = i == currentTab;
 
-            ImGui.PushStyleColor(ImGuiCol.Button,        active ? PixelTabActive : new Vector4(0, 0, 0, 0));
-            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, active ? PixelTabActive : PixelTabHover);
-            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  active ? PixelTabActive : PixelTabHover);
-            ImGui.PushStyleColor(ImGuiCol.Text,          active ? PixelAccent    : PixelDim);
+            ImGui.PushStyleColor(ImGuiCol.Button,        active ? Style.PixelTabActive : new Vector4(0, 0, 0, 0));
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, active ? Style.PixelTabActive : Style.PixelTabHover);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive,  active ? Style.PixelTabActive : Style.PixelTabHover);
+            ImGui.PushStyleColor(ImGuiCol.Text,          active ? Style.PixelAccent    : Style.PixelDim);
 
             if (ImGui.SmallButton($" {TabLabels[i]} ##pixelTab{i}"))
                 currentTab = i;
@@ -264,10 +233,10 @@ public class MainWindow : Window, IDisposable
 
         sb.Clear();
         sb.Append('─', count);
-        ImGui.TextColored(PixelDim, sb.ToString());
+        ImGui.TextColored(Style.PixelDim, sb.ToString());
     }
 
-    private void DrawPixelProgress(float ratio, uint current, uint max, string titleName, bool isComplete)
+    private void DrawPixelProgress(float ratio, uint current, uint max, string titleName, bool isComplete, uint titleId)
     {
         const int barWidth = 16;
         var filled = Math.Clamp((int)Math.Round(ratio * barWidth), 0, barWidth);
@@ -291,13 +260,20 @@ public class MainWindow : Window, IDisposable
         if (titleName.Length > 0)
         {
             ImGui.SameLine();
-            ImGui.TextColored(isComplete ? ColorTitleComplete : ColorTitleIncomplete, titleName);
+            ImGui.TextColored(isComplete ? Style.ColorTitleComplete : Style.ColorTitleIncomplete, titleName);
+
+            if (isComplete && titleId != 0 && ImGui.IsItemHovered())
+            {
+                ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
+                if (ImGui.IsMouseClicked(ImGuiMouseButton.Left))
+                    plugin.SetTitle(titleId, titleName);
+            }
         }
     }
 
     private void DrawSectionHeader(string title, Action? buttonAction = null)
     {
-        ImGui.TextColored(PixelAccent, title);
+        ImGui.TextColored(Style.PixelAccent, title);
         ImGui.SameLine();
         buttonAction?.Invoke();
         ImGuiHelpers.ScaledDummy(2);
@@ -340,7 +316,7 @@ public class MainWindow : Window, IDisposable
                 continue;
             }
 
-            ImGui.TextColored(PixelDim, "»");
+            ImGui.TextColored(Style.PixelDim, "»");
             ImGui.SameLine();
             ImGui.TextColored(entry.Color, entry.DisplayText);
         }
@@ -371,7 +347,7 @@ public class MainWindow : Window, IDisposable
         var achList = plugin.Achievements;
         if (achList == null || achList.Count == 0)
         {
-            ImGui.TextColored(ColorGray, "成就数据未就绪");
+            ImGui.TextColored(Style.ColorGray, "成就数据未就绪");
             return;
         }
 
@@ -382,7 +358,7 @@ public class MainWindow : Window, IDisposable
 
         if (cachedAchDisplay.Count == 0)
         {
-            ImGui.TextColored(ColorGray, "请在设置中选择要追踪的成就");
+            ImGui.TextColored(Style.ColorGray, "请在设置中选择要追踪的成就");
             return;
         }
 
@@ -407,18 +383,18 @@ public class MainWindow : Window, IDisposable
             }
             first = false;
 
-            ImGui.TextColored(ColorDefault, $"  {ach.AchievementName}");
+            ImGui.TextColored(Style.ColorDefault, $"  {ach.AchievementName}");
 
             if (ach.Max > 0)
             {
                 ImGuiHelpers.ScaledDummy(1);
                 ImGui.Text("  ");
                 ImGui.SameLine();
-                DrawPixelProgress(ach.Ratio, ach.Current, ach.Max, ach.TitleName, ach.IsComplete);
+                DrawPixelProgress(ach.Ratio, ach.Current, ach.Max, ach.TitleName, ach.IsComplete, ach.TitleID);
             }
             else
             {
-                ImGui.TextColored(ColorGray, "  正在获取数据...");
+                ImGui.TextColored(Style.ColorGray, "  正在获取数据...");
             }
         }
     }
@@ -451,9 +427,9 @@ public class MainWindow : Window, IDisposable
 
     private static uint GetProgressColor(float progress) => progress switch
     {
-        >= 1f    => ProgressColorComplete,
-        >= 0.5f  => ProgressColorHigh,
-        >= 0.25f => ProgressColorMid,
-        _        => ProgressColorLow,
+        >= 1f    => Style.ProgressColorComplete,
+        >= 0.5f  => Style.ProgressColorHigh,
+        >= 0.25f => Style.ProgressColorMid,
+        _        => Style.ProgressColorLow,
     };
 }
