@@ -73,16 +73,16 @@ TreasureForecast 是一个面向 Dalamud (XIVLauncher) 的 FFXIV 挖宝预测插
 
 - 通过 `HandleActorControlPacket` Hook 拦截
 - category = 407 且 TerritoryType = 1279（限定地图）
-- 根据 arg1 映射 HypnoslotResultType（156=AllDiff, 157=AllSame, 158=Preserve, 159=Reroll → wheel-open，160=End → wheel-end）
+- 根据 arg1 映射 HypnoslotResultType（156=AllDiff, 157=AllSame, 158=Preserve, 159=Reroll, 161=Resume → wheel-open，160=End → wheel-end）
 
 ### 选门开门地图回退（Door Selection Fallback）
 
 选门开门地图（TerritoryType: 588/712/725/879/1000/1123）中，当玩家未进动画时不会产生预测网络包。此时通过以下两条回退机制补记历史记录：
 
-1. **开门回退**：Hook `RaptureLogModule.ShowLogMessageUInt`，当 `logMessageID` 为 6998（6 区版）或 9365（4 区版）时，`value` 参数直接即轮数（Case(1)→第二区→round=1，Case(2)→第三区→round=2，…），静默新增一条 "开门（第 value 轮）" 历史记录。该记录不播报、不聊天输出，仅写入历史列表。
+1. **开门回退**：订阅 `IChatGui.LogMessage` 事件，当 `logMessageId` 为 6998（6 区版）或 9365（4 区版）时，从第 0 个整数参数获取轮数（Case(1)→第二区→round=1，Case(2)→第三区→round=2，…），静默新增一条 "开门（第 N 轮）" 历史记录。该记录不播报、不聊天输出，仅写入历史列表。
 2. **退出失败回退**：当从选门地图退出（领地变动）时，若本次会话未收到 gate-fail 网络包且未发生 `DutyWiped` / `DutyCompleted` 事件，则取上一条历史记录的轮数 X，静默新增一条 "失败（第 X+1 轮）" 历史记录。
 
-两条回退记录均通过 `MainWindow.AddResult` 的去重逻辑（对比上一条非分割线记录的 Value 和 Round）确保不重复。
+两条回退记录均通过 `MainWindow.AddResult` 的去重逻辑（对比当前会话内上一条记录的 Value 和 Round，遇分隔线即停止）确保不重复。
 
 ## 日志与调试
 
@@ -148,7 +148,7 @@ TreasureForecast/
 │   ├── ConfigWindow.cs           —— 设置窗口
 │   └── Style.cs                  —— 窗口样式常量（颜色 / 进度条配色 / Push-Pop 计数）
 ├── AchievementTracker.cs         —— 成就进度 Hook（ReceiveAchievementProgress）
-├── NetworkReceiver.cs            —— 底层网络 Hook 管理（双通道捕获 + 偏移量试探 + ShowLogMessageUInt hook + 嵌套枚举 + 领地过滤）
+├── NetworkReceiver.cs            —— 底层网络 Hook 管理（双通道捕获 + 偏移量试探 + 嵌套枚举 + 领地过滤）
 ├── TreasurePredictionService.cs  —— 预测逻辑核心（结果触发 + 去重）
 ├── Plugin.cs                     —— Dalamud 插件生命周期、选门地图回退、团灭/完成事件追踪
 ├── Configuration.cs              —— 插件配置

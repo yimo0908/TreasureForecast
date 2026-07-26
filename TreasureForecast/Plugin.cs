@@ -1,3 +1,4 @@
+using Dalamud.Game.Chat;
 using Dalamud.Game.Command;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Game.DutyState;
@@ -83,7 +84,8 @@ public sealed class Plugin : IDalamudPlugin
             PredictionService,
             Configuration);
         NetworkReceiver.Initialize();
-        NetworkReceiver.OnDoorGateOpenLogMessage += OnDoorGateOpenLogMessage;
+
+        Chat.LogMessage += OnLogMessage;
 
         PredictionService.OnTreasureResult += OnTreasureResult;
 
@@ -131,7 +133,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public void Dispose()
     {
-        NetworkReceiver.OnDoorGateOpenLogMessage -= OnDoorGateOpenLogMessage;
+        Chat.LogMessage -= OnLogMessage;
         NetworkReceiver.Dispose();
 
         DutyState.DutyCompleted -= OnDutyCompleted;
@@ -382,15 +384,23 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     /// <summary>
-    /// 选门地图 logmessage 回退：当 ShowLogMessageUInt 拦截到"打开了通往第{n}区的大门"时，
+    /// 选门地图 logmessage 回退：当 IChatGui.LogMessage 事件收到"打开了通往第{n}区的大门"时，
     /// 静默新增一条开门历史记录（不播报，去重对比上一条）。
-    /// round 参数即轮数，由 NetworkReceiver 从 ShowLogMessageUInt 的 value 参数直接获得。
+    /// 轮数从 logmessage 的第 0 个整数参数获取（Case(1)→第二区→round=1，…）。
     /// </summary>
-    private void OnDoorGateOpenLogMessage(int round)
+    private void OnLogMessage(ILogMessage message)
     {
         try
         {
-            var mapName = GetTerritoryName((ushort)ClientState.TerritoryType);
+            if (!Constants.DoorOpenLogMessageIds.Contains(message.LogMessageId)) return;
+
+            var territoryID = (ushort)ClientState.TerritoryType;
+            if (!Constants.DoorSelectionTerritoryIds.Contains(territoryID)) return;
+
+            if (!message.TryGetIntParameter(0, out var value) || value < 1) return;
+
+            var round = value;
+            var mapName = GetTerritoryName(territoryID);
 
             var added = MainWindow.AddResult(new TreasureResultDTO
             {
@@ -402,7 +412,7 @@ public sealed class Plugin : IDalamudPlugin
             if (added)
             {
                 gateOpenReceived = true;
-                Log.Information($"[选门回退] logmessage 开门记录已添加: {mapName} 第{round}轮");
+                Log.Information($"[选门回退] LogMessage 开门记录已添加: {mapName} 第{round}轮 (logMsgId={message.LogMessageId})");
             }
         }
         catch (Exception ex)
@@ -428,15 +438,25 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     /// <summary>
-    /// 退出选门地图时的失败补记：仅在确实收到过开门记录、
-    /// 且无失败网络包且未团灭/完成时，补记一条 gate-fail。
+    /// 退出选门地图时的失败补记：在无失败网络包且未团灭/完成时补记 gate-fail。
+    /// 收到过开门记录时补记下一轮失败；未收到任何开门记录（第一轮即失败且无进入动画）时补记第1轮失败。
     /// </summary>
     private void TryFallbackFailRecord()
     {
-        if (!gateOpenReceived || gateFailReceived || dutyWipedOrCompleted) return;
+        if (gateFailReceived || dutyWipedOrCompleted) return;
 
-        var lastRound = MainWindow.GetLastNonSeparatorRound();
-        var failRound = lastRound + 1;
+        int failRound;
+        if (gateOpenReceived)
+        {
+            // 正常回退：上一条是开门记录，补记下一条失败
+            failRound = MainWindow.GetLastNonSeparatorRound() + 1;
+        }
+        else
+        {
+            // 第一轮即失败且无进入动画（无预测网络包、无开门 logmessage）→ 补记第1轮
+            failRound = 1;
+        }
+
         var added = MainWindow.AddResult(new TreasureResultDTO
         {
             Value = "gate-fail",
@@ -445,7 +465,7 @@ public sealed class Plugin : IDalamudPlugin
             Timestamp = DateTime.Now
         });
         if (added)
-            Log.Information($"[选门回退] 退出地图补记失败: {doorSelectionMapName} 第{failRound}轮 (上一条轮数={lastRound})");
+            Log.Information($"[选门回退] 退出地图补记失败: {doorSelectionMapName} 第{failRound}轮 (gateOpen={gateOpenReceived})");
     }
 
     private void OnCommand(string command, string args)

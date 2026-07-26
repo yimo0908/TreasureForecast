@@ -142,22 +142,18 @@ public class MainWindow : Window, IDisposable
     }
 
     /// <summary>
-    /// 添加挖宝结果到历史记录。对开门/关门结果进行去重（对比上一条非分割线记录）。
+    /// 添加挖宝结果到历史记录。对开门/关门结果进行去重（对比当前会话最后一条记录）。
     /// 返回 false 表示因重复被跳过。
     /// </summary>
     public bool AddResult(TreasureResultDTO dto)
     {
-        // 去重：仅对开门/关门结果检查上一条是否重复
-        if (dto.Value is "gate-open" or "gate-fail")
+        // 去重：仅对开门/关门结果检查当前会话最后一条记录是否重复
+        // 最后一条是 separator（会话边界）时跳过，不跨会话比较
+        if (dto.Value is "gate-open" or "gate-fail" && results.Count > 0)
         {
-            for (int i = results.Count - 1; i >= 0; i--)
-            {
-                var entry = results[i];
-                if (entry.Value == "separator") continue;
-                if (entry.Value == dto.Value && entry.Round == dto.Round)
-                    return false;
-                break;
-            }
+            var last = results[^1];
+            if (last.Value != "separator" && last.Value == dto.Value && last.Round == dto.Round)
+                return false;
         }
 
         results.Add(CreateEntry(dto));

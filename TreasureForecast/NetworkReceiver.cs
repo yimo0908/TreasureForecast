@@ -44,15 +44,6 @@ internal unsafe class NetworkReceiver : IDisposable
 
     private Dalamud.Hooking.Hook<HandleActorControlPacketDelegate>? actorControlHook;
     private Dalamud.Hooking.Hook<OnReceivePacketDelegate>? onReceivePacketHook;
-    private Dalamud.Hooking.Hook<ShowLogMessageUIntDelegate>? showLogMessageUIntHook;
-
-    /// <summary>
-    /// 选门地图 logmessage 回调：当 ShowLogMessageUInt 被调用且 logMessageID 为"开门"消息时触发。
-    /// 参数为轮数（即 ShowLogMessageUInt 的 value 参数）。
-    /// </summary>
-    internal event Action<int>? OnDoorGateOpenLogMessage;
-
-    private delegate void ShowLogMessageUIntDelegate(nint raptureLogModule, uint logMessageID, uint value);
 
     private int actorControlPacketCount;
 
@@ -110,23 +101,10 @@ internal unsafe class NetworkReceiver : IDisposable
             log.Warning("无法解析 OnReceivePacket 地址！G10/G12/G15 转盘和开门预测不可用。");
         }
 
-        try
-        {
-            showLogMessageUIntHook = gameInterop.HookFromSignature<ShowLogMessageUIntDelegate>(
-                "E9 ?? ?? ?? ?? 0C ?? 88 42", OnShowLogMessageUInt);
-            showLogMessageUIntHook.Enable();
-            log.Information("成功 Hook ShowLogMessageUInt");
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "无法 Hook ShowLogMessageUInt！选门地图 logmessage 回退不可用。");
-        }
     }
 
     public void Dispose()
     {
-        showLogMessageUIntHook?.Disable();
-        showLogMessageUIntHook?.Dispose();
         onReceivePacketHook?.Disable();
         onReceivePacketHook?.Dispose();
         actorControlHook?.Disable();
@@ -356,33 +334,5 @@ internal unsafe class NetworkReceiver : IDisposable
     private static string DumpPacketHex(byte* data, int length = 80)
     {
         return Convert.ToHexString(new ReadOnlySpan<byte>(data, length));
-    }
-
-    /// <summary>
-    /// ShowLogMessageUInt detour：拦截游戏 logmessage 调用，
-    /// 当 logMessageID 为"打开了通往第{n}区的大门"时触发回调。
-    /// value 参数即轮数（Case(1)→第二区→round=1，Case(2)→第三区→round=2，…）。
-    /// </summary>
-    private void OnShowLogMessageUInt(nint raptureLogModule, uint logMessageID, uint value)
-    {
-        showLogMessageUIntHook!.Original(raptureLogModule, logMessageID, value);
-
-        try
-        {
-            if (!Constants.DoorOpenLogMessageIds.Contains(logMessageID)) return;
-
-            var territoryID = CurrentTerritoryID;
-            if (!Constants.DoorSelectionTerritoryIds.Contains(territoryID)) return;
-
-            var round = (int)value;
-            if (round < 1) return;
-
-            log.Information($"[选门回退] ShowLogMessageUInt: logMsgId={logMessageID} value={value} → 开门(第{round}轮) terr={territoryID}");
-            OnDoorGateOpenLogMessage?.Invoke(round);
-        }
-        catch (Exception ex)
-        {
-            log.Warning(ex, "处理 ShowLogMessageUInt 时出错");
-        }
     }
 }
